@@ -1,0 +1,45 @@
+# Secrets
+.env
+*/.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local sync state cache (SQLite + WAL sidecars)
+state.db
+state.db-wal
+state.db-shm
+state.db-journal
+
+# Logs
+*.log
+
+# HAR captures (used as living API spec; not committed)
+*.har
+
+# v1↔v2 math validation snapshots (contain real review data; sensitive).
+# tests/VALIDATION-LOG.md (the dated pass/fail summary) IS committed.
+tests/v1-difficult.json
+tests/v2-difficult.json
+tests/v2-pull-sync.json
+
+# Internal design notes (kept local, not for public repo)
+DESIGN-PRINCIPLES.md
+
+# IDE
+.vscode/
+.idea/
+
+# Local editor metadata (never publish)
+.cursor/
+
+# Local conventions live in Documents\projects\ — never commit into repos
+AGENTS.md
