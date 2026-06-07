@@ -48,6 +48,7 @@ exposes both modes:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Iterable, Union
 
 import requests
@@ -70,6 +71,58 @@ def _bearer_headers(token: AuthLike) -> dict[str, str]:
     return {"Authorization": f"Bearer {fresh.id_token}"}
 
 
+# Migaku's core-server validates Bearer tokens via Firebase Admin. When
+# Google's cert endpoint flakes on *their* side, the backend returns 401
+# with messages like "Error while fetching public key certificates:
+# Request Interrupted". Re-issuing the same id_token after a short backoff
+# usually succeeds — refreshing the token does not help.
+_TRANSIENT_AUTH_MARKERS = (
+    "public key certificates",
+    "FirebaseAuthException",
+    "CERTIFICATE_FETCH_FAILED",
+)
+_PULL_SYNC_AUTH_RETRIES = 5
+
+
+def _is_transient_migaku_auth_error(status_code: int, body: str) -> bool:
+    if status_code != 401:
+        return False
+    lower = body.lower()
+    return any(marker.lower() in lower for marker in _TRANSIENT_AUTH_MARKERS)
+
+
+def _get_pull_sync(
+    token: AuthLike,
+    *,
+    params: dict[str, Any],
+    max_attempts: int = _PULL_SYNC_AUTH_RETRIES,
+) -> requests.Response:
+    headers = _bearer_headers(token)
+    last: requests.Response | None = None
+    for attempt in range(max_attempts):
+        resp = requests.get(
+            const.PULL_SYNC_URL,
+            params=params,
+            headers=headers,
+            timeout=120,
+        )
+        last = resp
+        if resp.ok or not _is_transient_migaku_auth_error(resp.status_code, resp.text):
+            return resp
+        if attempt + 1 >= max_attempts:
+            break
+        wait = min(2 ** attempt, 10)
+        log.warning(
+            "Migaku auth validation flake (attempt %d/%d); retrying in %ds ...",
+            attempt + 1,
+            max_attempts,
+            wait,
+        )
+        time.sleep(wait)
+    assert last is not None
+    return last
+
+
 def pull_sync(
     token: AuthLike,
     device_id: str,
@@ -89,13 +142,11 @@ def pull_sync(
     to persist back into `StateCache.set_server_version()` for the
     next run.
     """
-    headers = _bearer_headers(token)
+    params_base = {"deviceId": device_id}
     if not paginate:
-        resp = requests.get(
-            const.PULL_SYNC_URL,
-            params={"serverVersion": server_version, "deviceId": device_id},
-            headers=headers,
-            timeout=120,
+        resp = _get_pull_sync(
+            token,
+            params={**params_base, "serverVersion": server_version},
         )
         if not resp.ok:
             raise RuntimeError(
@@ -107,11 +158,9 @@ def pull_sync(
     pages = 0
     merged: dict[str, Any] = {}
     while pages < max_pages:
-        resp = requests.get(
-            const.PULL_SYNC_URL,
-            params={"serverVersion": current_sv, "deviceId": device_id},
-            headers=headers,
-            timeout=120,
+        resp = _get_pull_sync(
+            token,
+            params={**params_base, "serverVersion": current_sv},
         )
         if not resp.ok:
             raise RuntimeError(
