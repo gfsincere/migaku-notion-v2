@@ -1,6 +1,6 @@
 """argparse dispatcher. Mirrors v1's CLI surface 1:1.
 
-Subcommands: sync, rebuild-cache, login, status, chars, setup, export.
+Subcommands: sync, rebuild-cache, login, status, chars, progress, setup, export.
 Same flag names, same defaults — so anyone who scripted around v1's CLI
 can drop v2 in unchanged.
 """
@@ -31,6 +31,7 @@ from .commands import (
     chars_cmd,
     export_cmd,
     login_cmd,
+    progress_cmd,
     rebuild_cache_cmd,
     setup_cmd,
     status_cmd,
@@ -122,6 +123,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_chars.add_argument("--list", action="store_true",
                          help="Also print the full sorted list of KNOWN+LEARNING chars.")
     p_chars.set_defaults(func=chars_cmd.run)
+
+    p_progress = sub.add_parser(
+        "progress",
+        help="Show KNOWN word and unique Hanzi character totals over time "
+             "(from state.db progress_snapshots).",
+    )
+    p_progress.add_argument("--lang", default=config.DEFAULT_LANG)
+    p_progress.add_argument(
+        "--record",
+        action="store_true",
+        help="Upsert today's snapshot from the current cache without running sync.",
+    )
+    p_progress.add_argument(
+        "--csv",
+        action="store_true",
+        help="Print snapshot history as CSV (for spreadsheets / charting).",
+    )
+    p_progress.add_argument(
+        "--json",
+        action="store_true",
+        help="Print snapshot history as JSON (same shape as the dashboard API).",
+    )
+    p_progress.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start a local dashboard server (prototype UI for exploring charts).",
+    )
+    p_progress.add_argument("--host", default="127.0.0.1",
+                            help="Bind address for --serve (default: 127.0.0.1).")
+    p_progress.add_argument("--port", type=int, default=8765,
+                            help="Port for --serve (default: 8765).")
+    p_progress.add_argument(
+        "--no-open",
+        action="store_true",
+        help="With --serve, do not open a browser tab automatically.",
+    )
+    p_progress.set_defaults(func=progress_cmd.run)
 
     p_setup = sub.add_parser(
         "setup",

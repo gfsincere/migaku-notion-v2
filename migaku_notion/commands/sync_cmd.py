@@ -33,8 +33,10 @@ from ..migaku.dict import MigakuDict
 from ..migaku.enrichment import WordEnricher
 from ..migaku.frequency import MigakuFrequency
 from ..models import CachedRow, Word
+from ..hanzi import add_cjk_chars
 from ..notion_client import (
     NotionClient,
+    build_database_totals_description,
     build_properties,
     cache_row_from_notion_page,
     format_parts_of_speech,
@@ -289,6 +291,25 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
         sink_name, args.dry_run, not cache_first_sync_done, do_meaning_writes,
     )
 
+    processed_words = processed_known = processed_learning = 0
+    known_chars: set[str] = set()
+    known_learning_chars: set[str] = set()
+    if notion is not None and not args.dry_run and args.full_refresh:
+        try:
+            notion.remove_sync_totals_section()
+            notion.update_database_description(
+                build_database_totals_description(
+                    total_words=0,
+                    total_known=0,
+                    total_learning=0,
+                    unique_known_chars=0,
+                    unique_known_learning_chars=0,
+                )
+            )
+            log.info("Database-page sync totals enabled for this full refresh (updates every 100 rows).")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Couldn't initialise database-page sync totals: %s", exc)
+
     created = updated = unchanged = archived_count = 0
     seen_keys: set[str] = set()
     for i, word in enumerate(words, 1):
@@ -372,6 +393,39 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
         else:
             unchanged += 1
 
+        processed_words += 1
+        status_upper = (word.known_status or "").upper()
+        if status_upper == "KNOWN":
+            processed_known += 1
+            add_cjk_chars(word.dict_form, known_chars)
+            add_cjk_chars(word.dict_form, known_learning_chars)
+        elif status_upper == "LEARNING":
+            processed_learning += 1
+            add_cjk_chars(word.dict_form, known_learning_chars)
+
+        if notion is not None and not args.dry_run and args.full_refresh and (i % 100 == 0 or i == len(words)):
+            try:
+                notion.update_database_description(
+                    build_database_totals_description(
+                        total_words=processed_words,
+                        total_known=processed_known,
+                        total_learning=processed_learning,
+                        unique_known_chars=len(known_chars),
+                        unique_known_learning_chars=len(known_learning_chars),
+                    )
+                )
+                log.info(
+                    "  ... database-page totals updated (words=%d known=%d learning=%d "
+                    "chars_known=%d chars_known+learning=%d)",
+                    processed_words,
+                    processed_known,
+                    processed_learning,
+                    len(known_chars),
+                    len(known_learning_chars),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Couldn't update database-page sync totals: %s", exc)
+
         if i % 200 == 0:
             log.info("  ... %d/%d processed (created=%d updated=%d unchanged=%d)",
                      i, len(words), created, updated, unchanged)
@@ -405,6 +459,12 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
             cache.mark_v2_first_sync_done()
             log.info("Flagged v2_first_sync_done=1; future syncs will not "
                      "auto-populate Meaning.")
+        snapshot_date = now_iso[:10]
+        snap = cache.record_progress_snapshot(args.lang, snapshot_date)
+        log.info(
+            "Progress snapshot %s: known_words=%d known_chars=%d",
+            snapshot_date, snap.known_words, snap.known_chars,
+        )
         cache.close()
 
     log.info(

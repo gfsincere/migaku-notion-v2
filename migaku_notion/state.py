@@ -16,6 +16,8 @@ v2 additions (forward-compatible — v1 tools will just ignore them):
     columns on `words` (added via idempotent ALTER TABLE; v1 tools will
     keep working since they just SELECT * over the columns they know
     about).
+  - `progress_snapshots` table: daily KNOWN word + unique Hanzi char
+    totals for progress tracking (v2 only).
 
 Atomicity rule (carried from v1): every Notion API call is paired with a
 single `cache.upsert(row)` inside its own transaction. A SIGKILL between
@@ -25,10 +27,20 @@ the two would lose at most one row's worth of state, recoverable by
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .hanzi import known_word_and_char_totals
 from .models import CachedRow
+
+
+@dataclass
+class ProgressSnapshot:
+    snapshot_date: str
+    lang: str
+    known_words: int
+    known_chars: int
 
 
 class StateCache:
@@ -60,6 +72,15 @@ class StateCache:
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT
+    );
+
+    -- Daily KNOWN-word / Hanzi-character totals for progress tracking.
+    CREATE TABLE IF NOT EXISTS progress_snapshots (
+        snapshot_date TEXT NOT NULL,
+        lang          TEXT NOT NULL,
+        known_words   INTEGER NOT NULL,
+        known_chars   INTEGER NOT NULL,
+        PRIMARY KEY (snapshot_date, lang)
     );
     """
 
@@ -266,6 +287,56 @@ class StateCache:
 
     def mark_v2_first_sync_done(self) -> None:
         self.set_meta(self.META_V2_FIRST_SYNC_DONE, "1")
+
+    # -----------------------------------------------------------------
+    # progress snapshots (KNOWN words + unique Hanzi chars over time)
+    # -----------------------------------------------------------------
+
+    def count_known_totals(self, lang: str) -> tuple[int, int]:
+        """Count non-archived KNOWN words and unique CJK chars for `lang`."""
+        forms = [
+            r["dict_form"] or ""
+            for r in self.conn.execute(
+                "SELECT dict_form FROM words "
+                "WHERE lang = ? AND archived = 0 AND UPPER(known_status) = 'KNOWN'",
+                (lang,),
+            )
+        ]
+        return known_word_and_char_totals(forms)
+
+    def record_progress_snapshot(self, lang: str, snapshot_date: str) -> ProgressSnapshot:
+        """Upsert one daily row (date, lang) -> known_words, known_chars."""
+        known_words, known_chars = self.count_known_totals(lang)
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO progress_snapshots
+                    (snapshot_date, lang, known_words, known_chars)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(snapshot_date, lang) DO UPDATE SET
+                    known_words = excluded.known_words,
+                    known_chars = excluded.known_chars
+                """,
+                (snapshot_date, lang, known_words, known_chars),
+            )
+        return ProgressSnapshot(snapshot_date, lang, known_words, known_chars)
+
+    def list_progress_snapshots(self, lang: str) -> list[ProgressSnapshot]:
+        rows = self.conn.execute(
+            "SELECT snapshot_date, lang, known_words, known_chars "
+            "FROM progress_snapshots WHERE lang = ? "
+            "ORDER BY snapshot_date",
+            (lang,),
+        )
+        return [
+            ProgressSnapshot(
+                snapshot_date=r["snapshot_date"],
+                lang=r["lang"],
+                known_words=int(r["known_words"]),
+                known_chars=int(r["known_chars"]),
+            )
+            for r in rows
+        ]
 
 
 # ---------------------------------------------------------------------------

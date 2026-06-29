@@ -103,12 +103,173 @@ class NotionClient:
         """Fetch the database object — used to inspect the current schema."""
         return self._request("GET", f"/databases/{self.database_id}")
 
+    def get_database_parent_page_id(self) -> str | None:
+        """Return the parent page id of the configured database, if any."""
+        parent = self.get_database().get("parent") or {}
+        if parent.get("type") == "page_id":
+            return parent.get("page_id")
+        return None
+
     def update_database_properties(self, properties: dict[str, Any]) -> dict[str, Any]:
         """PATCH the database's properties. Additive when the keys are new;
         also lets you tweak / rename existing ones."""
         return self._request(
             "PATCH", f"/databases/{self.database_id}",
             json={"properties": properties},
+        )
+
+    def update_database_description(self, rich_text: list[dict[str, Any]]) -> dict[str, Any]:
+        """PATCH the database description shown at the top of the database page."""
+        return self._request(
+            "PATCH", f"/databases/{self.database_id}",
+            json={"description": rich_text},
+        )
+
+    def list_block_children(self, block_id: str) -> list[dict[str, Any]]:
+        """Fetch all direct child blocks for a page/block."""
+        out: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            path = f"/blocks/{block_id}/children?page_size=100"
+            if cursor:
+                path += f"&start_cursor={cursor}"
+            data = self._request("GET", path)
+            out.extend(data.get("results", []))
+            if not data.get("has_more"):
+                break
+            cursor = data.get("next_cursor")
+        return out
+
+    def append_block_children(
+        self,
+        block_id: str,
+        children: list[dict[str, Any]],
+        *,
+        after: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Append child blocks, optionally after a specific existing block."""
+        body: dict[str, Any] = {"children": children}
+        if after:
+            body["after"] = after
+        data = self._request("PATCH", f"/blocks/{block_id}/children", json=body)
+        return data.get("results", [])
+
+    def update_block_text(self, block_id: str, block_type: str, text: str) -> dict[str, Any]:
+        """Replace the rich-text contents of a simple text block."""
+        return self._request(
+            "PATCH",
+            f"/blocks/{block_id}",
+            json={block_type: {"rich_text": _rich(text)}},
+        )
+
+    def delete_block(self, block_id: str) -> dict[str, Any]:
+        """Delete a block from Notion."""
+        return self._request("DELETE", f"/blocks/{block_id}")
+
+    def find_sync_totals_section(self) -> dict[str, str] | None:
+        """Find the old parent-page sync totals section, if present."""
+        parent_page_id = self.get_database_parent_page_id()
+        if not parent_page_id:
+            return None
+
+        children = self.list_block_children(parent_page_id)
+        for i, block in enumerate(children):
+            if block.get("type") != "heading_2":
+                continue
+            if _block_text(block) != "Sync totals":
+                continue
+            tail = children[i:i + 6]
+            if len(tail) < 6:
+                break
+            expected = [
+                "heading_2",
+                "heading_3",
+                "paragraph",
+                "heading_3",
+                "bulleted_list_item",
+                "bulleted_list_item",
+            ]
+            if [b.get("type") for b in tail] != expected:
+                break
+            return {
+                "section_heading": tail[0]["id"],
+                "total_heading": tail[1]["id"],
+                "total_value": tail[2]["id"],
+                "status_heading": tail[3]["id"],
+                "known_value": tail[4]["id"],
+                "learning_value": tail[5]["id"],
+            }
+        return None
+
+    def remove_sync_totals_section(self) -> None:
+        """Remove the legacy parent-page sync totals section if it exists."""
+        ids = self.find_sync_totals_section()
+        if not ids:
+            return
+        for block_id in reversed(list(ids.values())):
+            self.delete_block(block_id)
+
+    def ensure_sync_totals_section(self) -> dict[str, str] | None:
+        """Ensure the parent page has a live-updated sync totals section.
+
+        Placement note: the public Notion API cannot prepend blocks ahead of an
+        existing child database, so we insert the section immediately *after*
+        the Migaku Vocab database block.
+        """
+        parent_page_id = self.get_database_parent_page_id()
+        if not parent_page_id:
+            return None
+
+        children = self.list_block_children(parent_page_id)
+        found = self.find_sync_totals_section()
+        if found is not None:
+            return found
+
+        after_id = None
+        for block in children:
+            if block.get("type") == "child_database":
+                after_id = block.get("id")
+                break
+
+        new_blocks = [
+            _simple_text_block("heading_2", "Sync totals"),
+            _simple_text_block("heading_3", "Total words"),
+            _simple_text_block("paragraph", "0"),
+            _simple_text_block("heading_3", "By status"),
+            _simple_text_block("bulleted_list_item", "Total known words: 0"),
+            _simple_text_block("bulleted_list_item", "Total learning words: 0"),
+        ]
+        created = self.append_block_children(parent_page_id, new_blocks, after=after_id)
+        if len(created) != 6:
+            return None
+        return {
+            "section_heading": created[0]["id"],
+            "total_heading": created[1]["id"],
+            "total_value": created[2]["id"],
+            "status_heading": created[3]["id"],
+            "known_value": created[4]["id"],
+            "learning_value": created[5]["id"],
+        }
+
+    def update_sync_totals(
+        self,
+        section_ids: dict[str, str],
+        *,
+        total_words: int,
+        total_known: int,
+        total_learning: int,
+    ) -> None:
+        """Update the running total counters in the parent page section."""
+        self.update_block_text(section_ids["total_value"], "paragraph", str(total_words))
+        self.update_block_text(
+            section_ids["known_value"],
+            "bulleted_list_item",
+            f"Total known words: {total_known}",
+        )
+        self.update_block_text(
+            section_ids["learning_value"],
+            "bulleted_list_item",
+            f"Total learning words: {total_learning}",
         )
 
 
@@ -127,6 +288,16 @@ def prop_text(prop: dict[str, Any] | None) -> str:
         sel = prop.get("select") or {}
         return sel.get("name") or ""
     return ""
+
+
+def _block_text(block: dict[str, Any]) -> str:
+    """Extract plain text from a simple Notion block payload."""
+    block_type = block.get("type")
+    if not block_type:
+        return ""
+    payload = block.get(block_type) or {}
+    rich = payload.get("rich_text") or []
+    return "".join(t.get("plain_text", "") for t in rich)
 
 
 def prop_number(prop: dict[str, Any] | None) -> float | None:
@@ -199,6 +370,56 @@ def _rich(text: str | None) -> list[dict[str, Any]]:
     if not text:
         return []
     return [{"type": "text", "text": {"content": text[:1900]}}]
+
+
+def _rich_bold_multiline(lines: list[str]) -> list[dict[str, Any]]:
+    """Build a bold Notion rich_text array with explicit line breaks."""
+    out: list[dict[str, Any]] = []
+    for i, line in enumerate(lines):
+        content = line if i == len(lines) - 1 else line + "\n"
+        out.append(
+            {
+                "type": "text",
+                "text": {"content": content[:1900]},
+                "annotations": {
+                    "bold": True,
+                    "italic": False,
+                    "strikethrough": False,
+                    "underline": False,
+                    "code": False,
+                    "color": "default",
+                },
+            }
+        )
+    return out
+
+
+def build_database_totals_description(
+    *,
+    total_words: int,
+    total_known: int,
+    total_learning: int,
+    unique_known_chars: int,
+    unique_known_learning_chars: int,
+) -> list[dict[str, Any]]:
+    """Top-of-page totals block for the database description."""
+    return _rich_bold_multiline(
+        [
+            f"Total words: {total_words}",
+            f"Total known words: {total_known}",
+            f"Total learning words: {total_learning}",
+            f"Unique known characters: {unique_known_chars}",
+            f"Unique known + learning characters: {unique_known_learning_chars}",
+        ]
+    )
+
+
+def _simple_text_block(block_type: str, text: str) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": block_type,
+        block_type: {"rich_text": _rich(text)},
+    }
 
 
 def format_parts_of_speech(value: Any) -> str:

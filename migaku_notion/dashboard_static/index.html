@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Migaku progress (prototype)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/dashboard.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">migaku-notion-v2 · experimental</p>
+      <h1>Progress over time</h1>
+      <p class="sub">KNOWN words and unique Hanzi characters from daily <code>state.db</code> snapshots.</p>
+    </div>
+    <div class="controls">
+      <label>
+        Lang
+        <input id="lang" type="text" value="zh" size="4" />
+      </label>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <p id="error" class="error hidden"></p>
+
+  <section class="cards" id="cards">
+    <article class="card"><h2>Known words</h2><p class="value" id="v-words">—</p></article>
+    <article class="card"><h2>Known Hanzi</h2><p class="value" id="v-chars">—</p></article>
+    <article class="card"><h2>7-day pace</h2><p class="value small" id="v-pace7">—</p></article>
+    <article class="card"><h2>30-day pace</h2><p class="value small" id="v-pace30">—</p></article>
+  </section>
+
+  <section class="charts">
+    <article class="panel">
+      <h3>Cumulative totals</h3>
+      <canvas id="chart-cumulative"></canvas>
+    </article>
+    <article class="panel">
+      <h3>Daily change</h3>
+      <canvas id="chart-delta"></canvas>
+    </article>
+  </section>
+
+  <section class="panel table-panel">
+    <h3>Snapshot history</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Known words</th>
+          <th>Known chars</th>
+          <th>Δ words</th>
+          <th>Δ chars</th>
+        </tr>
+      </thead>
+      <tbody id="history"></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <p>UX prototype — layout and metrics will change. Data updates when you run <code>sync</code> or <code>progress --record</code>.</p>
+  </footer>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
