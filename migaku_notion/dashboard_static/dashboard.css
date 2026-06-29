@@ -123,6 +123,24 @@ button:hover { border-color: var(--accent); }
   font-weight: 600;
 }
 
+.panel-note {
+  margin: -0.35rem 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.hsk-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.25rem;
+}
+
+.hsk-tables h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 canvas { max-height: 280px; }
 
 table {

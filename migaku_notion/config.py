@@ -44,6 +44,12 @@ DICTS_DIR = Path(
     or (Path.home() / ".migaku-notion-v2" / "dicts")
 )
 
+# Cached HSK 2.0 / 3.0 word lists (downloaded from complete-hsk-vocabulary).
+HSK_DIR = Path(
+    os.getenv("MIGAKU_NOTION_HSK_DIR")
+    or (Path.home() / ".migaku-notion-v2" / "hsk")
+)
+
 
 DEFAULT_LANG = os.getenv("SYNC_LANG", "zh")
 DEFAULT_STATUS = os.getenv("SYNC_STATUS", "KNOWN,LEARNING")

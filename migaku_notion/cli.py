@@ -1,6 +1,6 @@
 """argparse dispatcher. Mirrors v1's CLI surface 1:1.
 
-Subcommands: sync, rebuild-cache, login, status, chars, progress, setup, export.
+Subcommands: sync, rebuild-cache, login, status, chars, progress, hsk, setup, export, add-cards.
 Same flag names, same defaults — so anyone who scripted around v1's CLI
 can drop v2 in unchanged.
 """
@@ -28,8 +28,10 @@ def _force_utf8_stdout() -> None:
         except (AttributeError, ValueError):
             pass
 from .commands import (
+    add_cards_cmd,
     chars_cmd,
     export_cmd,
+    hsk_cmd,
     login_cmd,
     progress_cmd,
     rebuild_cache_cmd,
@@ -161,6 +163,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_progress.set_defaults(func=progress_cmd.run)
 
+    p_hsk = sub.add_parser(
+        "hsk",
+        help="Compare KNOWN words to HSK 2.0 and 3.0 syllabi; estimate level.",
+    )
+    p_hsk.add_argument("--lang", default=config.DEFAULT_LANG)
+    p_hsk.add_argument(
+        "--refresh-lists",
+        action="store_true",
+        help="Re-download HSK word lists from complete-hsk-vocabulary on GitHub.",
+    )
+    p_hsk.add_argument(
+        "--threshold",
+        type=float,
+        default=0.80,
+        help="Inclusive coverage fraction for level estimate (default: 0.80).",
+    )
+    p_hsk.add_argument("--json", action="store_true", help="Print JSON report.")
+    p_hsk.set_defaults(func=hsk_cmd.run)
+
     p_setup = sub.add_parser(
         "setup",
         help="Interactive first-run wizard. Walks through Migaku login, "
@@ -196,6 +217,30 @@ def build_parser() -> argparse.ArgumentParser:
                                "API query, ~5 sec for 1500 rows). Without this flag, "
                                "the Meaning column in exports will be blank.")
     p_export.set_defaults(func=export_cmd.run)
+
+    p_add_cards = sub.add_parser(
+        "add-cards",
+        help="Read a Notion list, dedupe, and enqueue Migaku card creation.",
+    )
+    p_add_cards.add_argument("--source-db",
+                             help="Notion source database id containing candidate words.")
+    p_add_cards.add_argument("--source-page",
+                             help="Notion page id containing one word per line or bullet.")
+    p_add_cards.add_argument("--words",
+                             help="Comma-separated Mandarin words for direct smoke tests.")
+    p_add_cards.add_argument("--target-db",
+                             help="Optional Notion target database id for duplicate checks.")
+    p_add_cards.add_argument("--lang", default=config.DEFAULT_LANG)
+    p_add_cards.add_argument("--source-word-prop", default="Word")
+    p_add_cards.add_argument("--source-secondary-prop", default="Sense #")
+    p_add_cards.add_argument("--source-pos-prop", default="Part of speech")
+    p_add_cards.add_argument("--limit", type=int, default=0,
+                             help="Only process first N deduped candidates.")
+    p_add_cards.add_argument("--smoke-tests", type=int, default=0,
+                             help="With --apply, stop after N successful enqueues.")
+    p_add_cards.add_argument("--apply", action="store_true",
+                             help="Actually enqueue words. Without this flag: dry run.")
+    p_add_cards.set_defaults(func=add_cards_cmd.run)
 
     return parser
 
