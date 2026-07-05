@@ -324,6 +324,62 @@ select {
   background: #121820;
   color: var(--text);
   cursor: pointer;
+  list-style: none;
+}
+
+.word-chip-details {
+  position: relative;
+}
+
+.word-chip-details > summary {
+  list-style: none;
+}
+
+.word-chip-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.word-chip-details[open] .word-chip {
+  border-color: var(--accent);
+}
+
+.word-chip-details.pending .word-chip {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.word-menu {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  margin-top: 0.25rem;
+  min-width: 10rem;
+  padding: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #1a222c;
+  box-shadow: 0 8px 24px #00000055;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.word-menu-btn {
+  width: 100%;
+  text-align: left;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.word-menu-btn:hover {
+  border-color: var(--border);
+  background: #121820;
 }
 
 .word-chip:hover { border-color: var(--accent); }

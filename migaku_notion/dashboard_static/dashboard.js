@@ -136,7 +136,7 @@ function renderHistoryTable(points) {
   }
 }
 
-function renderWordGrid(containerId, words) {
+function renderWordGrid(containerId, words, listKind) {
   const el = document.getElementById(containerId);
   el.replaceChildren();
   if (!words.length) {
@@ -144,13 +144,83 @@ function renderWordGrid(containerId, words) {
     return;
   }
   for (const w of words) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "word-chip";
-    chip.textContent = w;
-    chip.title = "Click to copy";
-    chip.addEventListener("click", () => copyText(w, chip));
-    el.appendChild(chip);
+    const details = document.createElement("details");
+    details.className = "word-chip-details";
+
+    const summary = document.createElement("summary");
+    summary.className = "word-chip";
+    summary.textContent = w;
+    details.appendChild(summary);
+
+    const menu = document.createElement("div");
+    menu.className = "word-menu";
+
+    const mkBtn = (label, status) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "word-menu-btn";
+      btn.textContent = label;
+      btn.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        await markWordStatus(w, status, details, listKind);
+      });
+      return btn;
+    };
+
+    menu.appendChild(mkBtn("Mark as KNOWN", "KNOWN"));
+    if (listKind === "missing") {
+      menu.appendChild(mkBtn("Add as LEARNING", "LEARNING"));
+    }
+    details.appendChild(menu);
+    el.appendChild(details);
+  }
+}
+
+function applyLocalGapUpdate(word, newStatus) {
+  if (!gapsData?.levels) return;
+  const row = gapsData.levels.find((r) => r.level === selectedLevel);
+  if (!row) return;
+
+  row.missing = row.missing.filter((w) => w !== word);
+  row.learning = row.learning.filter((w) => w !== word);
+  row.known = row.known.filter((w) => w !== word);
+
+  if (newStatus === "KNOWN") {
+    row.known.push(word);
+    row.known.sort();
+  } else if (newStatus === "LEARNING") {
+    row.learning.push(word);
+    row.learning.sort();
+  } else {
+    row.missing.push(word);
+    row.missing.sort();
+  }
+
+  row.known_count = row.known.length;
+  row.learning_count = row.learning.length;
+  row.missing_count = row.missing.length;
+}
+
+async function markWordStatus(word, status, detailsEl, listKind) {
+  const lang = document.getElementById("lang").value.trim() || "zh";
+  detailsEl.classList.add("pending");
+  try {
+    const res = await fetch("/api/word/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word, lang, status }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    applyLocalGapUpdate(word, status);
+    renderLevelPills();
+    renderGapsDetail();
+  } catch (err) {
+    alert(`Could not update Migaku: ${err.message}`);
+    detailsEl.classList.remove("pending");
+    detailsEl.open = true;
   }
 }
 
@@ -207,8 +277,8 @@ function renderGapsDetail() {
   copyMissing.onclick = () => copyText(row.missing.join(", "), copyMissing);
   copyLearning.onclick = () => copyText(row.learning.join(", "), copyLearning);
 
-  renderWordGrid("missing-words", row.missing);
-  renderWordGrid("learning-words", row.learning);
+  renderWordGrid("missing-words", row.missing, "missing");
+  renderWordGrid("learning-words", row.learning, "learning");
 }
 
 async function loadProgress(lang) {
