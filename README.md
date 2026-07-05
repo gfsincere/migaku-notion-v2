@@ -1,6 +1,6 @@
 # migaku-notion-v2
 
-Your Migaku word list, where you already work: **Notion**, **spreadsheets**, and a **local progress dashboard** — without Docker or a local migoku server.
+Your Migaku word list, now supercharged with **Notion**, **spreadsheets**, and a **local progress dashboard**.
 
 This is the successor to [migaku-notion](https://github.com/gfsincere/migaku-notion). Same idea (sync + cache + optional Notion mirror), but v2 talks to Migaku’s cloud sync directly, enriches from Migaku’s public dictionary data, tracks progress over time, compares you to HSK syllabi, and can **push words and cards back into Migaku**.
 
