@@ -11,7 +11,7 @@ This is the successor to [migaku-notion](https://github.com/gfsincere/migaku-not
 - **Local cache** — `state.db` so re-syncs only touch what changed
 - **Dictionary enrichment** — pinyin, gloss hints, examples, frequency stars where available
 - **Fail rates** — computed locally from your review history in the pull payload
-- **Progress dashboard** — charts, HSK level estimate, missing-word lists; mark words KNOWN / LEARNING or create dictionary cards straight from the UI
+- **Progress dashboard** — local web UI with charts, HSK level estimate, missing-word lists; mark words KNOWN / LEARNING or create dictionary cards straight from the browser
 - **Export** — CSV / XLSX (Notion-shaped columns) from the CLI or the dashboard
 - **Add cards** — import a word list (Notion page, database, or `--words`) and enqueue Migaku card creation with dict enrichment
 
@@ -50,7 +50,11 @@ Use `--dry-run` to preview. Use `--no-notion` if you only want the local cache.
 python -m migaku_notion progress --serve
 ```
 
-Open http://127.0.0.1:8765 — **Progress Scorecard** tab for totals and charts; **Missing words** tab to see HSK gaps and mark words KNOWN, add as LEARNING (creates a dict card), or create cards from the list. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
+Open http://127.0.0.1:8765. The **Progress Scorecard** tab shows totals, growth charts, and HSK 2.0 / 3.0 coverage bars. The **Missing words** tab lists syllabus gaps by level — click a word to mark KNOWN, add as LEARNING (creates a dict card), or create a card only. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
+
+![Progress Scorecard — known words, Hanzi totals, HSK coverage](docs/dashboard-scorecard.png)
+
+![Missing words — HSK gaps with click-to-mark actions](docs/dashboard-missing-words.png)
 
 Each successful sync records a daily snapshot (known word count + unique known Hanzi) for the charts.
 
