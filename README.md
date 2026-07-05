@@ -4,15 +4,15 @@ Your Migaku word list, now supercharged with **Notion**, **spreadsheets**, and a
 
 This is the successor to [migaku-notion](https://github.com/gfsincere/migaku-notion). Same idea (sync + cache + optional Notion mirror), but v2 talks to Migaku’s cloud sync directly, enriches from Migaku’s public dictionary data, tracks progress over time, compares you to HSK syllabi, and can **push words and cards back into Migaku**.
 
-## What you get
+## What it does
 
 - **Sync** — pull KNOWN / LEARNING words through the same `/pull-sync` path the app uses
-- **Notion mirror (optional)** — upsert into a vocab database; Meaning column stays yours after the first fill
+- **Notion mirror (optional)** — upsert into a vocab database; Meaning column stays whatever you set it as after the first fill, and doesn't get replaced on sync
 - **Local cache** — `state.db` so re-syncs only touch what changed
 - **Dictionary enrichment** — pinyin, gloss hints, examples, frequency stars where available
 - **Fail rates** — computed locally from your review history in the pull payload
 - **Progress dashboard** — local web UI with charts, HSK level estimate, missing-word lists; mark words KNOWN / LEARNING or create dictionary cards straight from the browser
-- **Export** — CSV / XLSX (Notion-shaped columns) from the CLI or the dashboard
+- **Export** — CSV / XLSX exporting from the CLI or the dashboard
 - **Add cards** — import a word list (Notion page, database, or `--words`) and enqueue Migaku card creation with dict enrichment
 
 ## Install
@@ -50,7 +50,7 @@ Use `--dry-run` to preview. Use `--no-notion` if you only want the local cache.
 python -m migaku_notion progress --serve
 ```
 
-Open http://127.0.0.1:8765. The **Progress Scorecard** tab shows totals, growth charts, and HSK 2.0 / 3.0 coverage bars. The **Missing words** tab lists syllabus gaps by level — click a word to mark KNOWN, add as LEARNING (creates a dict card), or create a card only. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
+Open http://127.0.0.1:8765. The **Progress Scorecard** tab shows totals, growth charts, and HSK 2.0 / 3.0 coverage bars. The **Missing words** tab lists syllabus gaps by level: just click a word to mark KNOWN, add as LEARNING (creates a dict card), or create a card only. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
 
 ![Progress Scorecard — known words, Hanzi totals, HSK coverage](docs/dashboard-scorecard.png)
 
