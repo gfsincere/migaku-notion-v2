@@ -1,148 +1,134 @@
 # migaku-notion-v2
 
-Mirror your [Migaku](https://migaku.com) vocabulary into a Notion database (or keep a local cache only) so you can quiz, filter, and export your real word list. Pure Python: no Docker, no [migoku](https://github.com/khatibomar/migoku) server. This is the spiritual successor to the older [migaku-notion](https://github.com/gfsincere/migaku-notion) fork: same CLI shape and cache idea, more functionality (direct Migaku API, dictionary and frequency enrichment, optional Notion).
+Your Migaku word list, where you already work: **Notion**, **spreadsheets**, and a **local progress dashboard** — without Docker or a local migoku server.
+
+This is the successor to [migaku-notion](https://github.com/gfsincere/migaku-notion). Same idea (sync + cache + optional Notion mirror), but v2 talks to Migaku’s cloud sync directly, enriches from Migaku’s public dictionary data, tracks progress over time, compares you to HSK syllabi, and can **push words and cards back into Migaku**.
+
+## What you get
+
+- **Sync** — pull KNOWN / LEARNING words through the same `/pull-sync` path the app uses
+- **Notion mirror (optional)** — upsert into a vocab database; Meaning column stays yours after the first fill
+- **Local cache** — `state.db` so re-syncs only touch what changed
+- **Dictionary enrichment** — pinyin, gloss hints, examples, frequency stars where available
+- **Fail rates** — computed locally from your review history in the pull payload
+- **Progress dashboard** — charts, HSK level estimate, missing-word lists; mark words KNOWN / LEARNING or create dictionary cards straight from the UI
+- **Export** — CSV / XLSX (Notion-shaped columns) from the CLI or the dashboard
+- **Add cards** — import a word list (Notion page, database, or `--words`) and enqueue Migaku card creation with dict enrichment
 
 ## Install
 
+You need **Python 3.11+** and a **Migaku account**. Notion is optional.
+
 ```powershell
-cd <your-projects-dir>
 git clone https://github.com/gfsincere/migaku-notion-v2.git
 cd migaku-notion-v2
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-# Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
 python -m migaku_notion setup
 ```
 
-You need Python 3.11+, a Migaku account, and (only if you want Notion) a Notion internal integration and database. `setup` can skip Notion; then use `sync --no-notion` or leave `NOTION_TOKEN` / `NOTION_DATABASE_ID` unset.
+Linux / macOS: use `source .venv/bin/activate` instead of the Activate line.
 
-## Upgrade from migaku-notion
+`setup` walks you through Migaku login and (if you want it) Notion. It writes `.env` for you. Skip Notion entirely and use `sync --no-notion` later — everything still lands in `state.db`.
 
-If you used the older repo under `migaku-notion/`:
+Copy `.env.example` → `.env` if you prefer to edit by hand.
 
-1. Clone and install v2 as above (separate folder and venv).
-2. Copy `state.db` from `migaku-notion/sync/` into this repo root (same filename: `state.db`).
-3. Copy `migaku-notion/sync/.env` here as `.env`, then replace Migoku vars with Migaku: set `MIGAKU_EMAIL` / `MIGAKU_PASSWORD` (or run `python -m migaku_notion login` to write `MIGAKU_REFRESH_TOKEN`), remove `MIGOKU_*`. Keep `NOTION_TOKEN`, `NOTION_DATABASE_ID`, and `SYNC_*` if you use Notion.
-4. Run `python -m migaku_notion status` then `python -m migaku_notion sync --dry-run`, then `python -m migaku_notion sync`.
+## Daily use
 
-Full detail: [MIGRATION-FROM-V1.md](./MIGRATION-FROM-V1.md).
-
-## Why v2
-
-- Talks to Migaku over HTTPS (`core-server.migaku.com` `/pull-sync`, Firebase auth) instead of a local migoku Go server.
-- Enrichment from Migaku public dictionary SQLite plus per-language `frequency.db`; `pypinyin` only when the dict misses a term.
-- Fail rate and review counts computed locally from the pull payload (`cards`, `cardWordRelations`, `reviews`), not migoku's difficult-words endpoint.
-- Notion is optional: omit credentials or pass `sync --no-notion` to update `state.db` only.
-- Planned: `/push/enqueue` and SRSMEDIA uploads for writing cards and media back to Migaku (see `migaku_notion/migaku/push.py` and `files.py`; pair with your own HAR captures of those endpoints when wiring writes).
-
-Credit: the data model and early reverse engineering came from [migoku](https://github.com/khatibomar/migoku); v2 does not run it.
-
-## Architecture
-
-```
-                       Migaku account
-                       (your data)
-                             │
-                             │  1. POST identitytoolkit/v1/accounts:signInWithPassword
-                             │     → refreshToken + idToken
-                             │  2. POST securetoken/v1/token  (refresh on each run)
-                             ▼
-                       Firebase Auth
-                             │
-                             │  Authorization: Bearer <idToken>
-                             │
-              ┌──────────────┼─────────────────────────┐
-              ▼              ▼                         ▼
-   GET /pull-sync    POST /push/enqueue       PUT /data/SRSMEDIA/<file>
-   (core-server)     (core-server)            (file-sync-worker-api)
-   read vocabulary   write cards (planned)    upload audio/images (planned)
-              │              │                         │
-              └──────────────┼─────────────────────────┘
-                             ▼
-                  migaku-notion-v2 (Python)
-                             │  ┌──────────────────────────────────┐
-                             │  │  ~/.migaku-notion-v2/dicts/        │
-                             │  │  dictionary + frequency SQLite   │
-                             │  └──────────────────────────────────┘
-                             │
-                             │  pull-sync (paginate serverVersion)
-                             │  enrich from dict + frequency.db
-                             │  compute fail rates from cards / relations / reviews
-                             │  diff against state.db
-                             │  upsert optional Notion DB, or cache-only
-                             ▼
-                Notion (optional)  +  state.db
-```
-
-`POST /push/enqueue` and SRSMEDIA upload are the next wiring targets; read path and Notion or local-only sync are what works today.
-
-## migoku vs v2
-
-[migoku](https://github.com/khatibomar/migoku) is community Go code that logs into Migaku, pulls the SRS-style payload, and exposes it over `localhost` REST. This repo talks to the same conceptual data without running migoku.
-
-| Aspect | migoku | v2 (this repo) |
-|--------|--------|----------------|
-| Runtime | Go binary you run locally (often via Docker) | Python package only |
-| Migaku I/O | Download / cache SRS sync data, serve REST on localhost | HTTPS to `core-server.migaku.com`, Firebase auth, `GET /pull-sync` |
-| Read shape | SQLite + HTTP queries your script calls | JSON sync payload; client paginates `serverVersion` until caught up |
-| Mandarin readings / gloss | Not the main REST story | Migaku public dict SQLite + `frequency.db`; `pypinyin` if dict misses |
-| Fail rate / review stats | SQL and endpoints over the local DB | Aggregated in Python from `cards`, `cardWordRelations`, `reviews` in the pull payload |
-| Notion | Not migoku's job; other tools sat on top | Built-in optional Notion upsert + same `state.db` diff idea |
-| Write back to Migaku | Present in Go reference; most bridges stayed read-only | Read path shipped; `/push/enqueue` + media upload still to implement |
-
-## Commands
+**1. Sync** (after study, or whenever you want Notion / cache updated):
 
 ```powershell
-python -m migaku_notion status
-python -m migaku_notion sync
-python -m migaku_notion sync --full-refresh
-python -m migaku_notion sync --no-notion
-python -m migaku_notion sync --dry-run
-python -m migaku_notion rebuild-cache
-python -m migaku_notion chars
-python -m migaku_notion export --csv out.csv
-python -m migaku_notion export --xlsx out.xlsx
+python -m migaku_notion sync --lang zh --status KNOWN,LEARNING
 ```
 
-Re-runs diff against `state.db` so Notion only gets PATCHes when tracked fields change. On the first v2 sync, dict meaning is written only into rows whose Meaning is blank (unless `--no-dict-meanings`); after that, Meaning is not overwritten.
+Use `--dry-run` to preview. Use `--no-notion` if you only want the local cache.
 
-`MIGAKU_DEVICE_ID` in `.env` is a stable 32-hex device id for Migaku; changing it behaves like a new client (full pull next time).
+**2. Dashboard** (progress, HSK gaps, push actions):
+
+```powershell
+python -m migaku_notion progress --serve
+```
+
+Open http://127.0.0.1:8765 — **Progress Scorecard** tab for totals and charts; **Missing words** tab to see HSK gaps and mark words KNOWN, add as LEARNING (creates a dict card), or create cards from the list. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
+
+Each successful sync records a daily snapshot (known word count + unique known Hanzi) for the charts.
+
+**3. Export for spreadsheets / AI / backup:**
+
+```powershell
+python -m migaku_notion export --csv vocab.csv --lang zh
+python -m migaku_notion export --xlsx vocab.xlsx --lang zh
+```
+
+Same column layout as your Notion database. Feed CSV into whatever quiz generator you like — fail rates and status are included.
+
+**4. HSK check from the terminal:**
+
+```powershell
+python -m migaku_notion hsk --lang zh
+python -m migaku_notion hsk --gaps --level 2
+```
+
+**5. Bulk card creation from a word list:**
+
+```powershell
+python -m migaku_notion add-cards --words "你好,谢谢,再见" --apply
+```
+
+Or point at a Notion page / database of candidate words. Dry-run by default; add `--apply` when ready.
+
+## Command cheat sheet
+
+| Command | What it does |
+|---------|----------------|
+| `setup` | First-run wizard → `.env` |
+| `login` | Refresh Migaku token |
+| `status` | Quick sanity check |
+| `sync` | Pull Migaku → cache (+ optional Notion) |
+| `progress --serve` | Local dashboard |
+| `hsk` | HSK 2.0 / 3.0 coverage + level estimate |
+| `chars` | Unique Hanzi in your KNOWN (+ LEARNING) set |
+| `export --csv` / `--xlsx` | Spreadsheet export |
+| `add-cards` | Enqueue new Migaku cards from a list |
+| `rebuild-cache` | Rebuild cache from Notion (one-time rescue) |
 
 ## Notion schema
 
-Same database properties as the older migaku-notion tool, plus columns `Frequency` (number) and `Example` (rich text). `setup` can add missing columns on an existing DB.
+Same properties as the original migaku-notion tool, plus **Frequency** and **Example**. `setup` creates the database or adds missing columns.
 
-| Property | Type | Notes |
-|----------|------|--------|
-| Word | Title | dictForm |
-| Pinyin | Rich text | From dict per sense; else pypinyin for zh |
-| Meaning | Rich text | First sync fills blanks only |
-| Example | Rich text | v2 |
-| Pinyin (numeric) | Rich text | zh |
-| Status | Select | KNOWN, LEARNING, etc. |
-| Frequency | Number | v2, from frequency.db |
-| Fail rate % | Number | Local from reviews |
-| Total reviews | Number | |
-| Failed reviews | Number | |
-| Part of speech | Rich text | |
-| Language | Select | e.g. zh, ja |
-| Last synced | Date | |
-| Migaku key | Rich text | lang\|dictForm\|secondary |
-| Sense # | Rich text | zh homonym index |
+| Property | Notes |
+|----------|--------|
+| Word | Title — the hanzi / word |
+| Pinyin / Pinyin (numeric) | From dict or pypinyin |
+| Meaning | Yours — only auto-filled when blank on first v2 sync |
+| Example, Frequency | From Migaku dict data |
+| Status, Fail rate %, reviews | From Migaku |
+| Migaku key, Sense # | Stable sync keys |
 
-Dictionary catalog: [index2.json](https://migaku-public-data.migaku.com/dicts/index2.json). Cached under `~/.migaku-notion-v2/dicts/`.
+## Upgrading from migaku-notion v1
 
-## Next milestones
+Copy `state.db` and `.env` from your old `migaku-notion/sync/` folder into this repo root. Swap Migoku vars for `MIGAKU_EMAIL` / `MIGAKU_PASSWORD` (or run `login`). Details: [MIGRATION-FROM-V1.md](./MIGRATION-FROM-V1.md).
 
-Push and media to Migaku (`push_enqueue`, SRSMEDIA upload). Optional: Notion list import vs Migaku gap and enqueue. Optional: Firestore live sync.
+## How it works (short version)
+
+```
+Migaku account → Firebase auth → GET /pull-sync (read)
+                               → POST /push/enqueue (write status / cards)
+         ↓
+   migaku-notion-v2 + state.db + optional Notion
+         ↓
+   dashboard / CSV / XLSX / HSK reports
+```
+
+Dictionary files cache under `~/.migaku-notion-v2/dicts/`. HSK lists cache under `~/.migaku-notion-v2/hsk/`.
 
 ## Credits
 
-- [khatibomar/migoku](https://github.com/khatibomar/migoku)
+- [khatibomar/migoku](https://github.com/khatibomar/migoku) — early reverse engineering
 - [Migaku](https://migaku.com)
+- [complete-hsk-vocabulary](https://github.com/drkameleon/complete-hsk-vocabulary) — HSK word lists
 - [pypinyin](https://github.com/mozillazg/python-pinyin)
-- [Notion](https://notion.so)
 
 ## Support
 
