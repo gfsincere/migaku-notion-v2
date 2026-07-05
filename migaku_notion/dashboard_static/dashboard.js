@@ -47,6 +47,7 @@ function cellLine(row) {
 }
 
 function switchTab(name) {
+  closeWordMenu();
   document.querySelectorAll(".tab").forEach((el) => {
     el.classList.toggle("active", el.dataset.tab === name);
   });
@@ -144,36 +145,89 @@ function renderWordGrid(containerId, words, listKind) {
     return;
   }
   for (const w of words) {
-    const details = document.createElement("details");
-    details.className = "word-chip-details";
-
-    const summary = document.createElement("summary");
-    summary.className = "word-chip";
-    summary.textContent = w;
-    details.appendChild(summary);
-
-    const menu = document.createElement("div");
-    menu.className = "word-menu";
-
-    const mkBtn = (label, status) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "word-menu-btn";
-      btn.textContent = label;
-      btn.addEventListener("click", async (ev) => {
-        ev.preventDefault();
-        await markWordStatus(w, status, details, listKind);
-      });
-      return btn;
-    };
-
-    menu.appendChild(mkBtn("Mark as KNOWN", "KNOWN"));
-    if (listKind === "missing") {
-      menu.appendChild(mkBtn("Add as LEARNING", "LEARNING"));
-    }
-    details.appendChild(menu);
-    el.appendChild(details);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "word-chip";
+    chip.textContent = w;
+    chip.dataset.word = w;
+    chip.dataset.listKind = listKind;
+    chip.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openWordMenu(chip, w, listKind);
+    });
+    el.appendChild(chip);
   }
+}
+
+let activeWordMenu = null;
+
+function closeWordMenu() {
+  if (activeWordMenu?.menuEl) {
+    activeWordMenu.menuEl.remove();
+  }
+  if (activeWordMenu?.chipEl) {
+    activeWordMenu.chipEl.classList.remove("menu-open", "pending");
+  }
+  activeWordMenu = null;
+}
+
+function positionWordMenu(menuEl, chipEl) {
+  const rect = chipEl.getBoundingClientRect();
+  const menuRect = menuEl.getBoundingClientRect();
+  const margin = 8;
+  let top = rect.bottom + 4;
+  let left = rect.left;
+
+  if (top + menuRect.height > window.innerHeight - margin) {
+    top = rect.top - menuRect.height - 4;
+  }
+  if (left + menuRect.width > window.innerWidth - margin) {
+    left = window.innerWidth - menuRect.width - margin;
+  }
+  if (left < margin) left = margin;
+  if (top < margin) top = margin;
+
+  menuEl.style.top = `${top}px`;
+  menuEl.style.left = `${left}px`;
+}
+
+function openWordMenu(chipEl, word, listKind) {
+  if (activeWordMenu?.chipEl === chipEl) {
+    closeWordMenu();
+    return;
+  }
+  closeWordMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "word-menu word-menu-floating";
+  menu.setAttribute("role", "menu");
+
+  const mkBtn = (label, action) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "word-menu-btn";
+    btn.textContent = label;
+    btn.setAttribute("role", "menuitem");
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      closeWordMenu();
+      await markWordStatus(word, action, chipEl, listKind);
+    });
+    return btn;
+  };
+
+  menu.appendChild(mkBtn("Mark as KNOWN", "KNOWN"));
+  if (listKind === "missing") {
+    menu.appendChild(mkBtn("Add as LEARNING", "LEARNING"));
+    menu.appendChild(mkBtn("Create card (dict)", "CREATE_CARD"));
+  }
+
+  document.body.appendChild(menu);
+  positionWordMenu(menu, chipEl);
+  chipEl.classList.add("menu-open");
+  activeWordMenu = { menuEl: menu, chipEl, word, listKind };
+
+  requestAnimationFrame(() => positionWordMenu(menu, chipEl));
 }
 
 function applyLocalGapUpdate(word, newStatus) {
@@ -185,7 +239,9 @@ function applyLocalGapUpdate(word, newStatus) {
   row.learning = row.learning.filter((w) => w !== word);
   row.known = row.known.filter((w) => w !== word);
 
-  if (newStatus === "KNOWN") {
+  if (newStatus === "CREATE_CARD") {
+    // Card enqueued — no longer "missing" from HSK gap perspective.
+  } else if (newStatus === "KNOWN") {
     row.known.push(word);
     row.known.sort();
   } else if (newStatus === "LEARNING") {
@@ -201,26 +257,34 @@ function applyLocalGapUpdate(word, newStatus) {
   row.missing_count = row.missing.length;
 }
 
-async function markWordStatus(word, status, detailsEl, listKind) {
+async function markWordStatus(word, action, chipEl, listKind) {
   const lang = document.getElementById("lang").value.trim() || "zh";
-  detailsEl.classList.add("pending");
+  chipEl.classList.add("pending");
   try {
-    const res = await fetch("/api/word/status", {
+    const res = await fetch("/api/word/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ word, lang, status }),
+      body: JSON.stringify({ word, lang, action }),
     });
     const data = await res.json();
     if (!res.ok || data.error) {
       throw new Error(data.error || `HTTP ${res.status}`);
     }
-    applyLocalGapUpdate(word, status);
+    applyLocalGapUpdate(word, action);
+    closeWordMenu();
     renderLevelPills();
     renderGapsDetail();
+    if (action === "CREATE_CARD" || action === "LEARNING") {
+      const py = data.pinyin_marks || data.pinyin_numeric || "";
+      const label = action === "LEARNING" ? "Added as LEARNING" : "Card created in Migaku";
+      const lines = [`${label}: ${word}`];
+      if (data.meaning) lines.push(data.meaning);
+      if (py) lines.push(py);
+      alert(lines.join("\n\n"));
+    }
   } catch (err) {
-    alert(`Could not update Migaku: ${err.message}`);
-    detailsEl.classList.remove("pending");
-    detailsEl.open = true;
+    alert(`Migaku update failed: ${err.message}`);
+    chipEl.classList.remove("pending");
   }
 }
 
@@ -247,6 +311,7 @@ function renderLevelPills() {
     btn.className = "level-pill" + (row.level === selectedLevel ? " active" : "");
     btn.innerHTML = `L${row.level}<span class="pill-sub">${row.missing_count} missing</span>`;
     btn.addEventListener("click", () => {
+      closeWordMenu();
       selectedLevel = row.level;
       renderLevelPills();
       renderGapsDetail();
@@ -256,6 +321,7 @@ function renderLevelPills() {
 }
 
 function renderGapsDetail() {
+  closeWordMenu();
   if (!gapsData?.levels) return;
   const row = gapsData.levels.find((r) => r.level === selectedLevel) || gapsData.levels[0];
   if (!row) return;
@@ -370,6 +436,28 @@ document.getElementById("gaps-mode").addEventListener("change", () => {
 });
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("lang").addEventListener("change", load);
+
+document.addEventListener("click", (ev) => {
+  if (!activeWordMenu) return;
+  if (activeWordMenu.menuEl.contains(ev.target) || activeWordMenu.chipEl.contains(ev.target)) {
+    return;
+  }
+  closeWordMenu();
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeWordMenu();
+});
+
+window.addEventListener("scroll", () => {
+  if (!activeWordMenu) return;
+  positionWordMenu(activeWordMenu.menuEl, activeWordMenu.chipEl);
+}, true);
+
+window.addEventListener("resize", () => {
+  if (!activeWordMenu) return;
+  positionWordMenu(activeWordMenu.menuEl, activeWordMenu.chipEl);
+});
 
 const params = new URLSearchParams(location.search);
 if (params.get("lang")) document.getElementById("lang").value = params.get("lang");

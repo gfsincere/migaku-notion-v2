@@ -63,9 +63,29 @@ exact field set Migaku expects when bumping `knownStatus` for a word.
 """
 from __future__ import annotations
 
+import json
+import re
+import time
 from typing import Any, Iterable
 
+import requests
+
 from . import auth, const  # noqa: F401
+
+
+def _encode_lzo(payload: bytes) -> bytes:
+    """Encode payload in Migaku's LZO-framed wire format.
+
+    HAR frames start with b"LZ" then 4-byte little-endian original length.
+    The remaining bytes are minilzo-compressed payload.
+    """
+    try:
+        import minilzo
+    except Exception:
+        # Keep a graceful fallback for environments without minilzo.
+        return payload
+    compressed = minilzo.compress(payload)
+    return b"LZ" + len(payload).to_bytes(4, byteorder="little", signed=False) + compressed
 
 
 def empty_payload() -> dict[str, list[Any]]:
@@ -124,10 +144,44 @@ def push_enqueue(
         # then send with Content-Type application/octet-stream and
         # Content-Encoding: zstd, as documented in the module docstring.
     """
-    raise NotImplementedError(
-        "v2 TODO: implement /push/enqueue. Try plain JSON first; only fall "
-        "back to zstd-compressed octet-stream if that 4xx's. See module "
-        "docstring for the full discovery sequence."
+    token = auth.ensure_fresh(token)
+    params = {"deviceId": device_id, "deviceVersion": int(device_version)}
+    body_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body_lzo = _encode_lzo(body_json)
+
+    def _post(version: int) -> requests.Response:
+        return requests.post(
+            const.PUSH_ENQUEUE_URL,
+            params={"deviceId": device_id, "deviceVersion": int(version)},
+            data=body_lzo,
+            headers={
+                "Authorization": f"Bearer {token.id_token}",
+                "Content-Type": "application/octet-stream",
+                # Required by Migaku's current core-server write path.
+                "x-content-encoding": "lzo",
+            },
+            timeout=60,
+        )
+
+    resp = _post(int(device_version))
+    if resp.ok:
+        return resp.json()
+
+    # Drift can happen when another client pushes first; retry once with server hint.
+    if resp.status_code == 409:
+        m = re.search(r"expected=(\d+),\s*got=(\d+)", resp.text or "")
+        if m:
+            expected = int(m.group(1))
+            resp2 = _post(expected)
+            if resp2.ok:
+                return resp2.json()
+            raise RuntimeError(
+                f"Migaku /push/enqueue failed after VERSION_MISMATCH retry "
+                f"({resp2.status_code}): {resp2.text[:500]}"
+            )
+
+    raise RuntimeError(
+        f"Migaku /push/enqueue failed ({resp.status_code}): {resp.text[:500]}"
     )
 
 
@@ -168,10 +222,28 @@ def set_word_status(
         }]
         return push_enqueue(token, device_id, device_version, body)
     """
-    raise NotImplementedError(
-        "v2 TODO: see migoku/word_status.go::statusToUpdate and "
-        "setWordStatusItems for the exact field set."
-    )
+    status_up = status.strip().upper()
+    if status_up not in {"KNOWN", "LEARNING", "UNKNOWN", "IGNORED", "TRACKED"}:
+        raise ValueError(f"Unsupported status: {status}")
+
+    known_status = "UNKNOWN" if status_up == "TRACKED" else status_up
+    tracked = status_up == "TRACKED"
+    now_ms = int(time.time() * 1000)
+
+    body = empty_payload()
+    body["words"] = [{
+        "dictForm": word_text,
+        "secondary": secondary,
+        "partOfSpeech": part_of_speech,
+        "language": language,
+        "knownStatus": known_status,
+        "tracked": tracked,
+        "mod": now_ms,
+        "serverMod": -1,
+        "del": 0,
+        "hasCard": False,
+    }]
+    return push_enqueue(token, device_id, device_version, body)
 
 
 def push_words(
@@ -187,6 +259,6 @@ def push_words(
     tripping rows fetched from /pull-sync — just modify the relevant
     fields and pass the rest through unchanged.
     """
-    raise NotImplementedError(
-        "v2 TODO: thin wrapper over push_enqueue with body['words']=list(word_records)."
-    )
+    body = empty_payload()
+    body["words"] = list(word_records)
+    return push_enqueue(token, device_id, device_version, body)

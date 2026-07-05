@@ -9,6 +9,7 @@ from .. import config
 from ..models import CachedRow
 from ..state import StateCache
 from . import auth, push
+from . import pull as pull_mod
 
 
 log = logging.getLogger("migaku-notion")
@@ -43,6 +44,78 @@ def _pick_push_fields(rows: list[CachedRow], lang: str) -> tuple[str, str]:
         return secondary, pos
     # Words not yet in Migaku / cache — zh defaults from add-cards path.
     return "0", ""
+
+
+def _upsert_cache_status(
+    cache: StateCache,
+    lang: str,
+    word: str,
+    status: str,
+    *,
+    meaning: str | None = None,
+    pinyin_marks: str | None = None,
+    pinyin_numeric: str | None = None,
+    part_of_speech: str | None = None,
+) -> int:
+    """Update cached rows for *word* after a Migaku push."""
+    status_up = status.strip().upper()
+    rows = find_cached_word_rows(cache, lang, word)
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    for row in rows:
+        updated = CachedRow(
+            migaku_key=row.migaku_key,
+            page_id=row.page_id,
+            lang=row.lang,
+            dict_form=row.dict_form,
+            secondary=row.secondary,
+            known_status=status_up if status_up != "TRACKED" else "UNKNOWN",
+            fail_rate=row.fail_rate,
+            total_reviews=row.total_reviews,
+            failed_reviews=row.failed_reviews,
+            part_of_speech=part_of_speech or row.part_of_speech,
+            last_synced=now_iso,
+            archived=row.archived,
+            pinyin_marks=pinyin_marks or row.pinyin_marks,
+            pinyin_numeric=pinyin_numeric or row.pinyin_numeric,
+            sense_index=row.sense_index,
+            meaning=meaning or row.meaning,
+            example=row.example,
+            frequency_stars=row.frequency_stars,
+            notion_meaning_was_blank=row.notion_meaning_was_blank,
+        )
+        cache.upsert(updated)
+    if not rows:
+        log.info("No local cache row for %r — Migaku updated; run sync to pull the new word.", word)
+    return len(rows)
+
+
+def bump_server_version_after_push(
+    session: auth.AuthSession,
+    cache: StateCache,
+    push_result: dict[str, Any] | None,
+) -> None:
+    """Keep the pull-sync cursor current after dashboard pushes."""
+    current = cache.get_server_version()
+    candidate = current
+    if isinstance(push_result, dict):
+        received = push_result.get("receivedAt")
+        if isinstance(received, int) and received > candidate:
+            candidate = received
+    device_id = config.get_or_create_device_id()
+    try:
+        payload = pull_mod.pull_sync(
+            session,
+            device_id,
+            server_version=candidate,
+            paginate=False,
+            fallback_full_on_500=False,
+        )
+        candidate = max(candidate, pull_mod.next_server_version(payload, previous=candidate))
+    except RuntimeError as exc:
+        log.warning("Could not probe server version after push (%s); using receivedAt only.", exc)
+    if candidate > current:
+        cache.set_server_version(candidate)
+        log.info("server_version: %d -> %d (after push)", current, candidate)
 
 
 def push_word_status(
@@ -82,33 +155,9 @@ def push_word_status(
         status=status_up,
     )
 
-    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    if rows:
-        for row in rows:
-            updated = CachedRow(
-                migaku_key=row.migaku_key,
-                page_id=row.page_id,
-                lang=row.lang,
-                dict_form=row.dict_form,
-                secondary=row.secondary,
-                known_status=status_up if status_up != "TRACKED" else "UNKNOWN",
-                fail_rate=row.fail_rate,
-                total_reviews=row.total_reviews,
-                failed_reviews=row.failed_reviews,
-                part_of_speech=row.part_of_speech,
-                last_synced=now_iso,
-                archived=row.archived,
-                pinyin_marks=row.pinyin_marks,
-                pinyin_numeric=row.pinyin_numeric,
-                sense_index=row.sense_index,
-                meaning=row.meaning,
-                example=row.example,
-                frequency_stars=row.frequency_stars,
-                notion_meaning_was_blank=row.notion_meaning_was_blank,
-            )
-            cache.upsert(updated)
-    else:
-        log.info("No local cache row for %r — Migaku updated; run sync to pull the new word.", word)
+    cached_rows_updated = _upsert_cache_status(cache, lang, word, status_up)
+
+    bump_server_version_after_push(session, cache, result)
 
     return {
         "ok": True,
@@ -116,6 +165,59 @@ def push_word_status(
         "lang": lang,
         "status": status_up,
         "secondary": secondary,
-        "cached_rows_updated": len(rows),
+        "cached_rows_updated": cached_rows_updated,
         "migaku": result,
     }
+
+
+def apply_word_action(
+    session: auth.AuthSession,
+    cache: StateCache,
+    *,
+    dict_form: str,
+    lang: str,
+    action: str,
+) -> dict[str, Any]:
+    """Dashboard / CLI: mark status or enqueue a dictionary-enriched card."""
+    action_up = action.strip().upper()
+    word = dict_form.strip()
+    if not word:
+        raise ValueError("word is required")
+
+    if action_up in ("CREATE_CARD", "LEARNING"):
+        from .card_create import enqueue_card_creation, load_card_create_context
+
+        ctx = load_card_create_context(session, cache, lang)
+        if action_up == "LEARNING" and word in ctx.words_with_cards:
+            return push_word_status(
+                session, cache, dict_form=word, lang=lang, status="LEARNING",
+            )
+        known_status = "UNKNOWN" if action_up == "CREATE_CARD" else "LEARNING"
+        result = enqueue_card_creation(
+            session,
+            ctx,
+            cache,
+            dict_form=word,
+            known_status=known_status,
+        )
+        if action_up == "LEARNING":
+            _upsert_cache_status(
+                cache,
+                lang,
+                word,
+                "LEARNING",
+                meaning=result.get("meaning"),
+                pinyin_marks=result.get("pinyin_marks"),
+                pinyin_numeric=result.get("pinyin_numeric"),
+                part_of_speech=result.get("part_of_speech"),
+            )
+        bump_server_version_after_push(session, cache, result.get("migaku"))
+        return result
+
+    return push_word_status(
+        session,
+        cache,
+        dict_form=word,
+        lang=lang,
+        status=action_up,
+    )

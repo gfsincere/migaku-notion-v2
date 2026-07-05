@@ -130,6 +130,7 @@ def pull_sync(
     *,
     paginate: bool = True,
     max_pages: int = 200,
+    fallback_full_on_500: bool = True,
 ) -> dict[str, Any]:
     """Fetch the raw `migakuSyncPayload` dict from /pull-sync.
 
@@ -149,6 +150,23 @@ def pull_sync(
             params={**params_base, "serverVersion": server_version},
         )
         if not resp.ok:
+            if (
+                fallback_full_on_500
+                and resp.status_code == 500
+                and server_version > const.PULL_SYNC_INITIAL_SERVER_VERSION
+            ):
+                log.warning(
+                    "Migaku /pull-sync returned 500 at serverVersion=%d "
+                    "(stale cursor after a push?) — retrying full refresh.",
+                    server_version,
+                )
+                return pull_sync(
+                    token,
+                    device_id,
+                    server_version=const.PULL_SYNC_INITIAL_SERVER_VERSION,
+                    paginate=False,
+                    fallback_full_on_500=False,
+                )
             raise RuntimeError(
                 f"Migaku /pull-sync failed ({resp.status_code}): {resp.text[:500]}"
             )
@@ -163,6 +181,25 @@ def pull_sync(
             params={**params_base, "serverVersion": current_sv},
         )
         if not resp.ok:
+            if (
+                fallback_full_on_500
+                and resp.status_code == 500
+                and server_version > const.PULL_SYNC_INITIAL_SERVER_VERSION
+                and pages == 0
+            ):
+                log.warning(
+                    "Migaku /pull-sync returned 500 at serverVersion=%d "
+                    "(stale cursor after a push?) — retrying full refresh.",
+                    server_version,
+                )
+                return pull_sync(
+                    token,
+                    device_id,
+                    server_version=const.PULL_SYNC_INITIAL_SERVER_VERSION,
+                    paginate=paginate,
+                    max_pages=max_pages,
+                    fallback_full_on_500=False,
+                )
             raise RuntimeError(
                 f"Migaku /pull-sync failed ({resp.status_code}): {resp.text[:500]}"
             )

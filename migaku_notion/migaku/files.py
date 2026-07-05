@@ -27,6 +27,8 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import quote
 
+import requests
+
 from . import auth, const  # noqa: F401
 
 
@@ -54,10 +56,26 @@ def upload_srs_media(
         resp.raise_for_status()
         return resp.json()["filePath"]
     """
-    raise NotImplementedError(
-        "v2 TODO: implement SRSMEDIA upload. See HAR entries #16-#18 and "
-        "the module docstring for the full request/response shape."
+    token = auth.ensure_fresh(token)
+    url = f"{const.FILE_SYNC_DATA_PREFIX}/{quote(filename, safe='')}"
+    resp = requests.put(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token.id_token}",
+            "Content-Type": content_type,
+        },
+        timeout=120,
     )
+    if not resp.ok:
+        raise RuntimeError(
+            f"SRSMEDIA upload failed ({resp.status_code}) for {filename}: {resp.text[:500]}"
+        )
+    payload = resp.json()
+    fp = payload.get("filePath")
+    if not fp:
+        raise RuntimeError(f"SRSMEDIA upload missing filePath for {filename}")
+    return str(fp)
 
 
 def upload_srs_media_file(
@@ -84,8 +102,22 @@ def upload_srs_media_file(
             content_type=content_type,
         )
     """
-    raise NotImplementedError(
-        "v2 TODO: thin filesystem wrapper over upload_srs_media."
+    guessed = content_type
+    if guessed is None:
+        guessed = {
+            ".webp": "image/webp",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".m4a": "audio/mp4",
+            ".mp3": "audio/mpeg",
+            ".ogg": "audio/ogg",
+        }.get(path.suffix.lower(), "application/octet-stream")
+    return upload_srs_media(
+        token,
+        filename=path.name,
+        data=path.read_bytes(),
+        content_type=guessed,
     )
 
 

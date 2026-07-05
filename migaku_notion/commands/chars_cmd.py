@@ -8,25 +8,11 @@ import argparse
 import logging
 
 from .. import config
+from ..hanzi import is_cjk
 from ..state import StateCache
 
 
 log = logging.getLogger("migaku-notion")
-
-
-def _is_cjk(ch: str) -> bool:
-    """True if `ch` is a CJK ideograph (Han character).
-
-    Covers the main blocks where >99% of practical Mandarin chars live:
-    CJK Unified Ideographs (U+4E00-U+9FFF), Extension A (U+3400-U+4DBF),
-    and Extension B (U+20000-U+2A6DF).
-    """
-    if not ch:
-        return False
-    cp = ord(ch)
-    return (0x4E00 <= cp <= 0x9FFF
-            or 0x3400 <= cp <= 0x4DBF
-            or 0x20000 <= cp <= 0x2A6DF)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -54,7 +40,7 @@ def run(args: argparse.Namespace) -> int:
         out: set[str] = set()
         for w in words:
             for ch in w:
-                if _is_cjk(ch):
+                if is_cjk(ch):
                     out.add(ch)
         return out
 

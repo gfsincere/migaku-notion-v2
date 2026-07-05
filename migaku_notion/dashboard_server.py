@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import config
 from .migaku import auth
-from .migaku.word_actions import push_word_status
+from .migaku.word_actions import apply_word_action
 from .progress_stats import build_progress_payload
 from .hsk.compare import build_hsk_gaps_from_cache, build_hsk_report_from_cache
 from .state import StateCache
@@ -63,7 +63,7 @@ def _load_hsk_gaps_json(lang: str, standard: str, mode: str) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
-def _post_word_status_json(body: bytes) -> tuple[int, bytes]:
+def _post_word_action_json(body: bytes) -> tuple[int, bytes]:
     try:
         req = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -71,7 +71,7 @@ def _post_word_status_json(body: bytes) -> tuple[int, bytes]:
 
     word = (req.get("word") or "").strip()
     lang = (req.get("lang") or config.DEFAULT_LANG).strip()
-    status = (req.get("status") or "KNOWN").strip().upper()
+    action = (req.get("action") or req.get("status") or "KNOWN").strip().upper()
 
     if not word:
         return 400, json.dumps({"error": "word is required"}).encode("utf-8")
@@ -90,12 +90,12 @@ def _post_word_status_json(body: bytes) -> tuple[int, bytes]:
 
     try:
         with StateCache(config.STATE_DB_PATH) as cache:
-            payload = push_word_status(
+            payload = apply_word_action(
                 session,
                 cache,
                 dict_form=word,
                 lang=lang,
-                status=status,
+                action=action,
             )
     except ValueError as exc:
         return 400, json.dumps({"error": str(exc)}).encode("utf-8")
@@ -154,10 +154,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path == "/api/word/status":
+        if path in ("/api/word/status", "/api/word/action"):
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length) if length else b"{}"
-            code, data = _post_word_status_json(body)
+            code, data = _post_word_action_json(body)
             self._send(code, data, "application/json; charset=utf-8")
             return
 
