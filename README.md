@@ -56,6 +56,18 @@ Open http://127.0.0.1:8765. The **Progress Scorecard** tab shows totals, growth 
 
 ![Missing words — HSK gaps with click-to-mark actions](docs/dashboard-missing-words.png)
 
+Click a word in the missing list to push status or cards back to Migaku:
+
+![Word actions — mark KNOWN, add as LEARNING, or create dict card](docs/dashboard-word-actions.png)
+
+The server enqueues the card via Migaku’s `/push/enqueue` API; run `sync` afterward to pull the new word into `state.db`:
+
+![Server log — card enqueued to Migaku](docs/dashboard-add-learning-log.png)
+
+The dashboard confirms with the dictionary gloss and pinyin:
+
+![Confirmation — word added as LEARNING](docs/dashboard-add-learning-confirm.png)
+
 Each successful sync records a daily snapshot (known word count + unique known Hanzi) for the charts.
 
 **3. Export for spreadsheets / AI / backup:**
