@@ -23,81 +23,139 @@
     </div>
   </header>
 
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab active" data-tab="overview" role="tab">Overview</button>
+    <button type="button" class="tab" data-tab="missing" role="tab">Missing words</button>
+  </nav>
+
   <p id="error" class="error hidden"></p>
   <p id="hsk-error" class="error hidden"></p>
+  <p id="gaps-error" class="error hidden"></p>
 
-  <section class="cards" id="cards">
-    <article class="card"><h2>Known words</h2><p class="value" id="v-words">—</p></article>
-    <article class="card"><h2>Known Hanzi</h2><p class="value" id="v-chars">—</p></article>
-    <article class="card"><h2>HSK 3.0 est.</h2><p class="value small" id="v-hsk30">—</p></article>
-    <article class="card"><h2>HSK 2.0 est.</h2><p class="value small" id="v-hsk20">—</p></article>
-  </section>
+  <div id="tab-overview" class="tab-panel active">
+    <section class="cards" id="cards">
+      <article class="card"><h2>Known words</h2><p class="value" id="v-words">—</p></article>
+      <article class="card"><h2>Known Hanzi</h2><p class="value" id="v-chars">—</p></article>
+      <article class="card"><h2>HSK 3.0 est.</h2><p class="value small" id="v-hsk30">—</p></article>
+      <article class="card"><h2>HSK 2.0 est.</h2><p class="value small" id="v-hsk20">—</p></article>
+    </section>
 
-  <section class="charts">
-    <article class="panel">
-      <h3>Cumulative totals</h3>
-      <canvas id="chart-cumulative"></canvas>
-    </article>
-    <article class="panel">
-      <h3>Daily change</h3>
-      <canvas id="chart-delta"></canvas>
-    </article>
-  </section>
+    <section class="charts">
+      <article class="panel">
+        <h3>Cumulative totals</h3>
+        <canvas id="chart-cumulative"></canvas>
+      </article>
+      <article class="panel">
+        <h3>Daily change</h3>
+        <canvas id="chart-delta"></canvas>
+      </article>
+    </section>
 
-  <section class="charts">
-    <article class="panel">
-      <h3>HSK 3.0 inclusive coverage</h3>
-      <p class="panel-note">Words known vs full syllabus up to each level (bands 7–9 = level 7).</p>
-      <canvas id="chart-hsk30"></canvas>
-    </article>
-    <article class="panel">
-      <h3>HSK 2.0 inclusive coverage</h3>
-      <canvas id="chart-hsk20"></canvas>
-    </article>
-  </section>
+    <section class="charts">
+      <article class="panel">
+        <h3>HSK 3.0 inclusive coverage</h3>
+        <p class="panel-note">Words known vs full syllabus up to each level (bands 7–9 = level 7).</p>
+        <canvas id="chart-hsk30"></canvas>
+      </article>
+      <article class="panel">
+        <h3>HSK 2.0 inclusive coverage</h3>
+        <canvas id="chart-hsk20"></canvas>
+      </article>
+    </section>
 
-  <section class="panel table-panel">
-    <h3>HSK level breakdown</h3>
-    <div class="hsk-tables">
-      <div>
-        <h4>HSK 3.0</h4>
-        <table>
-          <thead>
-            <tr><th>Lvl</th><th>Inclusive</th><th>Exclusive</th></tr>
-          </thead>
-          <tbody id="hsk30-table"></tbody>
-        </table>
+    <section class="panel table-panel">
+      <h3>HSK level breakdown</h3>
+      <div class="hsk-tables">
+        <div>
+          <h4>HSK 3.0</h4>
+          <table>
+            <thead>
+              <tr><th>Lvl</th><th>Inclusive</th><th>Exclusive</th></tr>
+            </thead>
+            <tbody id="hsk30-table"></tbody>
+          </table>
+        </div>
+        <div>
+          <h4>HSK 2.0</h4>
+          <table>
+            <thead>
+              <tr><th>Lvl</th><th>Inclusive</th><th>Exclusive</th></tr>
+            </thead>
+            <tbody id="hsk20-table"></tbody>
+          </table>
+        </div>
       </div>
-      <div>
-        <h4>HSK 2.0</h4>
-        <table>
-          <thead>
-            <tr><th>Lvl</th><th>Inclusive</th><th>Exclusive</th></tr>
-          </thead>
-          <tbody id="hsk20-table"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <section class="panel table-panel">
-    <h3>Snapshot history</h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Known words</th>
-          <th>Known chars</th>
-          <th>Δ words</th>
-          <th>Δ chars</th>
-        </tr>
-      </thead>
-      <tbody id="history"></tbody>
-    </table>
-  </section>
+    <section class="panel table-panel">
+      <h3>Snapshot history</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Known words</th>
+            <th>Known chars</th>
+            <th>Δ words</th>
+            <th>Δ chars</th>
+          </tr>
+        </thead>
+        <tbody id="history"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <div id="tab-missing" class="tab-panel">
+    <section class="panel gaps-toolbar">
+      <div class="gaps-controls">
+        <label>
+          Syllabus
+          <select id="gaps-standard">
+            <option value="hsk30" selected>HSK 3.0</option>
+            <option value="hsk20">HSK 2.0</option>
+          </select>
+        </label>
+        <label>
+          Word set
+          <select id="gaps-mode">
+            <option value="exclusive" selected>Exclusive (new at level)</option>
+            <option value="inclusive">Inclusive (cumulative)</option>
+          </select>
+        </label>
+      </div>
+      <p class="panel-note">Missing = not in Migaku as KNOWN or LEARNING. Learning = already in your Migaku word list but not KNOWN yet.</p>
+    </section>
+
+    <section class="level-pills" id="level-pills"></section>
+
+    <section class="panel gaps-detail">
+      <div class="gaps-header">
+        <h3 id="gaps-title">Select a level</h3>
+        <div class="gaps-stats" id="gaps-stats"></div>
+      </div>
+
+      <div class="gaps-columns">
+        <article class="gaps-col">
+          <div class="gaps-col-head">
+            <h4>Missing <span id="missing-count" class="badge">0</span></h4>
+            <button type="button" class="btn-small" id="copy-missing" disabled>Copy all</button>
+          </div>
+          <p class="col-hint">Paste into Migaku → add words / mining list</p>
+          <div id="missing-words" class="word-grid"></div>
+        </article>
+        <article class="gaps-col learning-col">
+          <div class="gaps-col-head">
+            <h4>Learning in Migaku <span id="learning-count" class="badge">0</span></h4>
+            <button type="button" class="btn-small" id="copy-learning" disabled>Copy all</button>
+          </div>
+          <p class="col-hint">Already tracked — study these to move them to KNOWN</p>
+          <div id="learning-words" class="word-grid"></div>
+        </article>
+      </div>
+    </section>
+  </div>
 
   <footer>
-    <p>UX prototype — layout and metrics will change. HSK lists: <a href="https://github.com/drkameleon/complete-hsk-vocabulary" target="_blank" rel="noopener">complete-hsk-vocabulary</a> (MIT). First HSK fetch: <code>python -m migaku_notion hsk --refresh-lists</code>.</p>
+    <p>UX prototype — layout and metrics will change. Run <code>sync</code> before viewing. HSK lists: <a href="https://github.com/drkameleon/complete-hsk-vocabulary" target="_blank" rel="noopener">complete-hsk-vocabulary</a>.</p>
   </footer>
 
   <script src="/static/dashboard.js"></script>

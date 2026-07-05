@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import config
 from .progress_stats import build_progress_payload
-from .hsk.compare import build_hsk_report_from_cache
+from .hsk.compare import build_hsk_gaps_from_cache, build_hsk_report_from_cache
 from .state import StateCache
 
 
@@ -45,6 +45,22 @@ def _load_hsk_json(lang: str) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+def _load_hsk_gaps_json(lang: str, standard: str, mode: str) -> bytes:
+    if not config.STATE_DB_PATH.exists():
+        body = {"error": "state.db not found — run sync first", "lang": lang}
+        return json.dumps(body).encode("utf-8")
+    try:
+        with StateCache(config.STATE_DB_PATH) as cache:
+            payload = build_hsk_gaps_from_cache(
+                cache, lang, standard=standard, mode=mode,
+            )
+    except ValueError as exc:
+        payload = {"error": str(exc), "lang": lang}
+    except Exception as exc:  # noqa: BLE001
+        payload = {"error": str(exc), "lang": lang}
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "migaku-notion-dashboard/0.1"
 
@@ -61,6 +77,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/hsk":
             lang = parse_qs(parsed.query).get("lang", [config.DEFAULT_LANG])[0]
             data = _load_hsk_json(lang)
+            self._send(200, data, "application/json; charset=utf-8")
+            return
+
+        if path == "/api/hsk/gaps":
+            qs = parse_qs(parsed.query)
+            lang = qs.get("lang", [config.DEFAULT_LANG])[0]
+            standard = qs.get("standard", ["hsk30"])[0]
+            mode = qs.get("mode", ["exclusive"])[0]
+            data = _load_hsk_gaps_json(lang, standard, mode)
             self._send(200, data, "application/json; charset=utf-8")
             return
 

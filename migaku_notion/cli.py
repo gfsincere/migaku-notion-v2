@@ -180,6 +180,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inclusive coverage fraction for level estimate (default: 0.80).",
     )
     p_hsk.add_argument("--json", action="store_true", help="Print JSON report.")
+    p_hsk.add_argument(
+        "--gaps",
+        action="store_true",
+        help="Show missing / learning word lists per HSK level (see --level).",
+    )
+    p_hsk.add_argument(
+        "--standard",
+        choices=("hsk20", "hsk30"),
+        default="hsk30",
+        help="HSK syllabus for --gaps (default: hsk30).",
+    )
+    p_hsk.add_argument(
+        "--mode",
+        choices=("exclusive", "inclusive"),
+        default="exclusive",
+        help="exclusive = words new at that level; inclusive = cumulative (default: exclusive).",
+    )
+    p_hsk.add_argument(
+        "--level",
+        type=int,
+        default=None,
+        help="With --gaps, print word lists for this level only (e.g. 3).",
+    )
     p_hsk.set_defaults(func=hsk_cmd.run)
 
     p_setup = sub.add_parser(

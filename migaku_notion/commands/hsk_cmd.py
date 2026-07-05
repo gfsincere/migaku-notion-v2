@@ -6,7 +6,7 @@ import json
 import logging
 
 from .. import config
-from ..hsk import build_hsk_report_from_cache, ensure_hsk_lists
+from ..hsk import build_hsk_gaps_from_cache, build_hsk_report_from_cache, ensure_hsk_lists
 from ..state import StateCache
 
 
@@ -34,6 +34,18 @@ def _print_standard(report: dict) -> None:
         )
 
 
+def _print_gaps_level(row: dict, *, label: str, mode: str) -> None:
+    print(f"\n{label} Level {row['level']} ({mode})")
+    print(f"  known={row['known_count']}  learning={row['learning_count']}  "
+          f"missing={row['missing_count']}  (of {row['total']})")
+    if row["learning"]:
+        print(f"\n  Learning in Migaku ({len(row['learning'])}):")
+        print("  " + ", ".join(row["learning"]))
+    if row["missing"]:
+        print(f"\n  Missing ({len(row['missing'])}):")
+        print("  " + ", ".join(row["missing"]))
+
+
 def run(args: argparse.Namespace) -> int:
     if args.refresh_lists:
         ensure_hsk_lists(refresh=True)
@@ -44,6 +56,38 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     with StateCache(config.STATE_DB_PATH) as cache:
+        if args.gaps:
+            gaps = build_hsk_gaps_from_cache(
+                cache,
+                args.lang,
+                standard=args.standard,
+                mode=args.mode,
+                refresh_lists=args.refresh_lists,
+            )
+            if args.json:
+                print(json.dumps(gaps, indent=2, ensure_ascii=False))
+                return 0
+            if args.level is not None:
+                row = next((r for r in gaps["levels"] if r["level"] == args.level), None)
+                if row is None:
+                    log.error("No such level %s for %s", args.level, gaps["label"])
+                    return 1
+                _print_gaps_level(row, label=gaps["label"], mode=gaps["mode"])
+                print()
+                return 0
+            print(f"\n{gaps['label']} gaps ({gaps['mode']}, lang={args.lang})")
+            print(f"  {'Lvl':>3}  {'Missing':>8}  {'Learning':>8}  {'Known':>8}")
+            for row in gaps["levels"]:
+                print(
+                    f"  {row['level']:>3}  "
+                    f"{row['missing_count']:>8}  "
+                    f"{row['learning_count']:>8}  "
+                    f"{row['known_count']:>8}"
+                )
+            print("\nUse --level N to print word lists for one band.")
+            print()
+            return 0
+
         report = build_hsk_report_from_cache(
             cache,
             args.lang,
