@@ -52,41 +52,68 @@ def _upsert_cache_status(
     word: str,
     status: str,
     *,
+    secondary: str | None = None,
     meaning: str | None = None,
     pinyin_marks: str | None = None,
     pinyin_numeric: str | None = None,
     part_of_speech: str | None = None,
 ) -> int:
-    """Update cached rows for *word* after a Migaku push."""
+    """Update cached rows for *word* after a Migaku push (insert if new)."""
     status_up = status.strip().upper()
     rows = find_cached_word_rows(cache, lang, word)
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    for row in rows:
-        updated = CachedRow(
-            migaku_key=row.migaku_key,
-            page_id=row.page_id,
-            lang=row.lang,
-            dict_form=row.dict_form,
-            secondary=row.secondary,
+    if rows:
+        for row in rows:
+            updated = CachedRow(
+                migaku_key=row.migaku_key,
+                page_id=row.page_id,
+                lang=row.lang,
+                dict_form=row.dict_form,
+                secondary=row.secondary,
+                known_status=status_up if status_up != "TRACKED" else "UNKNOWN",
+                fail_rate=row.fail_rate,
+                total_reviews=row.total_reviews,
+                failed_reviews=row.failed_reviews,
+                part_of_speech=part_of_speech or row.part_of_speech,
+                last_synced=now_iso,
+                archived=row.archived,
+                pinyin_marks=pinyin_marks or row.pinyin_marks,
+                pinyin_numeric=pinyin_numeric or row.pinyin_numeric,
+                sense_index=row.sense_index,
+                meaning=meaning or row.meaning,
+                example=row.example,
+                frequency_stars=row.frequency_stars,
+                notion_meaning_was_blank=row.notion_meaning_was_blank,
+            )
+            cache.upsert(updated)
+        return len(rows)
+
+    sec = (secondary or "0").strip() or "0"
+    migaku_key = f"{lang}|{word}|{sec}"
+    cache.upsert(
+        CachedRow(
+            migaku_key=migaku_key,
+            page_id=f"local:{migaku_key}",
+            lang=lang,
+            dict_form=word,
+            secondary=sec,
             known_status=status_up if status_up != "TRACKED" else "UNKNOWN",
-            fail_rate=row.fail_rate,
-            total_reviews=row.total_reviews,
-            failed_reviews=row.failed_reviews,
-            part_of_speech=part_of_speech or row.part_of_speech,
+            fail_rate=None,
+            total_reviews=None,
+            failed_reviews=None,
+            part_of_speech=part_of_speech,
             last_synced=now_iso,
-            archived=row.archived,
-            pinyin_marks=pinyin_marks or row.pinyin_marks,
-            pinyin_numeric=pinyin_numeric or row.pinyin_numeric,
-            sense_index=row.sense_index,
-            meaning=meaning or row.meaning,
-            example=row.example,
-            frequency_stars=row.frequency_stars,
-            notion_meaning_was_blank=row.notion_meaning_was_blank,
+            archived=False,
+            pinyin_marks=pinyin_marks,
+            pinyin_numeric=pinyin_numeric,
+            sense_index=sec,
+            meaning=meaning,
+            example=None,
+            frequency_stars=None,
+            notion_meaning_was_blank=True,
         )
-        cache.upsert(updated)
-    if not rows:
-        log.info("No local cache row for %r — Migaku updated; run sync to pull the new word.", word)
-    return len(rows)
+    )
+    return 1
 
 
 def bump_server_version_after_push(
@@ -155,7 +182,9 @@ def push_word_status(
         status=status_up,
     )
 
-    cached_rows_updated = _upsert_cache_status(cache, lang, word, status_up)
+    cached_rows_updated = _upsert_cache_status(
+        cache, lang, word, status_up, secondary=secondary,
+    )
 
     bump_server_version_after_push(session, cache, result)
 
@@ -206,6 +235,7 @@ def apply_word_action(
                 lang,
                 word,
                 "LEARNING",
+                secondary=result.get("secondary"),
                 meaning=result.get("meaning"),
                 pinyin_marks=result.get("pinyin_marks"),
                 pinyin_numeric=result.get("pinyin_numeric"),

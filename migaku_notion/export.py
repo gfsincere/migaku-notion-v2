@@ -50,7 +50,23 @@ def _row_value(row: CachedRow, attr: str, meanings: dict[str, str] | None) -> An
         if notion_meaning:
             return notion_meaning
         return row.meaning or ""
-    return getattr(row, attr, "")
+    if attr == "sense_index":
+        return row.sense_index or row.secondary or ""
+    val = getattr(row, attr, "")
+    return "" if val is None else val
+
+
+def build_csv_bytes(rows: list[CachedRow], meanings: dict[str, str] | None = None) -> bytes:
+    """Serialise *rows* to UTF-8 CSV bytes (Excel-friendly BOM)."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([name for name, _ in EXPORT_COLUMNS])
+    for row in rows:
+        writer.writerow([_row_value(row, attr, meanings) for _, attr in EXPORT_COLUMNS])
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def fetch_meanings_from_notion(notion: NotionClient) -> dict[str, str]:
@@ -88,13 +104,7 @@ def filter_rows(rows: list[CachedRow], lang: str | None,
 
 
 def export_csv(path: Path, rows: list[CachedRow], meanings: dict[str, str] | None) -> None:
-    import csv
-    headers = [name for name, _ in EXPORT_COLUMNS]
-    with path.open("w", encoding="utf-8-sig", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(headers)
-        for r in rows:
-            writer.writerow([_row_value(r, attr, meanings) for _, attr in EXPORT_COLUMNS])
+    path.write_bytes(build_csv_bytes(rows, meanings))
     log.info("Wrote CSV: %s (%d rows)", path, len(rows))
 
 

@@ -3,8 +3,7 @@
 Reads the `progress_snapshots` table in state.db (one row per calendar day,
 updated automatically at the end of each non-dry-run `sync`).
 
-Use `progress --serve` to open a local dashboard prototype for exploring
-charts and layout before the UX is finalised.
+Use `progress --serve` to open the local progress dashboard.
 """
 from __future__ import annotations
 

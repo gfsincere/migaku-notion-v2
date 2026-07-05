@@ -150,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_progress.add_argument(
         "--serve",
         action="store_true",
-        help="Start a local dashboard server (prototype UI for exploring charts).",
+        help="Start the local progress dashboard server.",
     )
     p_progress.add_argument("--host", default="127.0.0.1",
                             help="Bind address for --serve (default: 127.0.0.1).")

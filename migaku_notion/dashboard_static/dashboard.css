@@ -43,9 +43,40 @@ h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; }
 .sub { margin: 0.35rem 0 0; color: var(--muted); max-width: 42rem; }
 
 .controls {
-  display: flex;
-  gap: 0.75rem;
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: minmax(4.5rem, 1fr) minmax(7rem, 1fr);
+  column-gap: 0.75rem;
+  row-gap: 0.45rem;
+  align-items: end;
+}
+
+.controls-lang {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+#refresh {
+  grid-column: 2;
+  grid-row: 1;
+  width: 100%;
+}
+
+#export-csv {
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  font-size: 0.82rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+
+#export-pdf {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+  font-size: 0.82rem;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
 }
 
 label {
@@ -377,4 +408,51 @@ select {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+@media print {
+  body {
+    background: #fff;
+    color: #111;
+    padding: 0.5in;
+  }
+
+  .controls,
+  .tabs,
+  footer,
+  .error,
+  #tab-missing,
+  .word-menu-floating {
+    display: none !important;
+  }
+
+  .tab-panel {
+    display: none !important;
+  }
+
+  #tab-overview {
+    display: block !important;
+  }
+
+  .panel,
+  .card {
+    background: #fff;
+    border-color: #ccc;
+    break-inside: avoid;
+  }
+
+  .card h2,
+  .panel h3,
+  .panel h4,
+  th {
+    color: #333;
+  }
+
+  canvas {
+    max-height: 220px;
+  }
+
+  a {
+    color: #111;
+  }
 }

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from .state import ProgressSnapshot
+from .state import ProgressSnapshot, StateCache
 
 
 def parse_snapshot_date(value: str) -> date:
@@ -51,6 +51,24 @@ def pace_per_day(delta: tuple[int, int, int] | None) -> dict[str, float] | None:
         "chars_per_day": d_chars / elapsed,
         "words_total": d_words,
         "chars_total": d_chars,
+    }
+
+
+def build_live_stats_payload(cache: StateCache, lang: str) -> dict[str, Any]:
+    """Current KNOWN/LEARNING totals and HSK estimates from local cache."""
+    from .hsk.compare import build_hsk_report_from_cache, words_by_status
+    from .hanzi import known_word_and_char_totals
+
+    by_status = words_by_status(cache, lang)
+    known_forms = sorted(by_status.get("KNOWN", set()))
+    known_words, known_chars = known_word_and_char_totals(known_forms)
+    hsk = build_hsk_report_from_cache(cache, lang)
+    return {
+        "known_words": known_words,
+        "known_chars": known_chars,
+        "learning_words": len(by_status.get("LEARNING", set())),
+        "hsk20": hsk["hsk20"],
+        "hsk30": hsk["hsk30"],
     }
 
 

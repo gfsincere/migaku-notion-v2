@@ -3,28 +3,30 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Migaku progress (prototype)</title>
+  <title>Progress Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="/static/dashboard.css" />
 </head>
 <body>
   <header class="top">
     <div>
-      <p class="eyebrow">migaku-notion-v2 · experimental</p>
-      <h1>Progress over time</h1>
-      <p class="sub">KNOWN words, Hanzi coverage, and HSK syllabus comparison (prototype UI).</p>
+      <p class="eyebrow">migaku-notion-v2</p>
+      <h1>Progress Dashboard</h1>
+      <p class="sub">KNOWN words, Hanzi coverage, and HSK syllabus comparison.</p>
     </div>
     <div class="controls">
-      <label>
+      <label class="controls-lang">
         Lang
         <input id="lang" type="text" value="zh" size="4" />
       </label>
       <button id="refresh" type="button">Refresh</button>
+      <button id="export-csv" type="button">Export word list</button>
+      <button id="export-pdf" type="button">Export dashboard report</button>
     </div>
   </header>
 
   <nav class="tabs" role="tablist">
-    <button type="button" class="tab active" data-tab="overview" role="tab">Overview</button>
+    <button type="button" class="tab active" data-tab="overview" role="tab">Progress Scorecard</button>
     <button type="button" class="tab" data-tab="missing" role="tab">Missing words</button>
   </nav>
 
@@ -155,7 +157,7 @@
   </div>
 
   <footer>
-    <p>UX prototype — layout and metrics will change. Run <code>sync</code> before viewing. HSK lists: <a href="https://github.com/drkameleon/complete-hsk-vocabulary" target="_blank" rel="noopener">complete-hsk-vocabulary</a>.</p>
+    <p>Run <code>sync</code> to refresh snapshot history. HSK lists: <a href="https://github.com/drkameleon/complete-hsk-vocabulary" target="_blank" rel="noopener">complete-hsk-vocabulary</a>.</p>
   </footer>
 
   <script src="/static/dashboard.js"></script>

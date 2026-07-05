@@ -230,50 +230,56 @@ function openWordMenu(chipEl, word, listKind) {
   requestAnimationFrame(() => positionWordMenu(menu, chipEl));
 }
 
-function applyLocalGapUpdate(word, newStatus) {
-  if (!gapsData?.levels) return;
-  const row = gapsData.levels.find((r) => r.level === selectedLevel);
-  if (!row) return;
+function applyLiveStats(live) {
+  if (!live) return;
+  document.getElementById("v-words").textContent = fmt(live.known_words);
+  document.getElementById("v-chars").textContent = fmt(live.known_chars);
+  document.getElementById("v-hsk30").textContent = hskEstimateLine(live.hsk30);
+  document.getElementById("v-hsk20").textContent = hskEstimateLine(live.hsk20);
+  hsk30Chart = renderHskChart("chart-hsk30", live.hsk30, hsk30Chart);
+  hsk20Chart = renderHskChart("chart-hsk20", live.hsk20, hsk20Chart);
+  renderHskTable("hsk30-table", live.hsk30);
+  renderHskTable("hsk20-table", live.hsk20);
+}
 
-  row.missing = row.missing.filter((w) => w !== word);
-  row.learning = row.learning.filter((w) => w !== word);
-  row.known = row.known.filter((w) => w !== word);
-
-  if (newStatus === "CREATE_CARD") {
-    // Card enqueued — no longer "missing" from HSK gap perspective.
-  } else if (newStatus === "KNOWN") {
-    row.known.push(word);
-    row.known.sort();
-  } else if (newStatus === "LEARNING") {
-    row.learning.push(word);
-    row.learning.sort();
-  } else {
-    row.missing.push(word);
-    row.missing.sort();
+function applyGapsPayload(data) {
+  if (!data?.levels) return;
+  gapsData = data;
+  if (!gapsData.levels.some((r) => r.level === selectedLevel)) {
+    selectedLevel = gapsData.levels[0]?.level ?? 1;
   }
-
-  row.known_count = row.known.length;
-  row.learning_count = row.learning.length;
-  row.missing_count = row.missing.length;
+  renderLevelPills();
+  renderGapsDetail();
 }
 
 async function markWordStatus(word, action, chipEl, listKind) {
   const lang = document.getElementById("lang").value.trim() || "zh";
+  const gapsStandard = document.getElementById("gaps-standard")?.value || "hsk30";
+  const gapsMode = document.getElementById("gaps-mode")?.value || "exclusive";
   chipEl.classList.add("pending");
   try {
     const res = await fetch("/api/word/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ word, lang, action }),
+      body: JSON.stringify({
+        word,
+        lang,
+        action,
+        gaps_standard: gapsStandard,
+        gaps_mode: gapsMode,
+      }),
     });
     const data = await res.json();
     if (!res.ok || data.error) {
       throw new Error(data.error || `HTTP ${res.status}`);
     }
-    applyLocalGapUpdate(word, action);
+    applyLiveStats(data.live);
+    if (data.gaps) {
+      applyGapsPayload(data.gaps);
+    } else {
+      await loadGaps(lang);
+    }
     closeWordMenu();
-    renderLevelPills();
-    renderGapsDetail();
     if (action === "CREATE_CARD" || action === "LEARNING") {
       const py = data.pinyin_marks || data.pinyin_numeric || "";
       const label = action === "LEARNING" ? "Added as LEARNING" : "Card created in Migaku";
@@ -436,6 +442,47 @@ document.getElementById("gaps-mode").addEventListener("change", () => {
 });
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("lang").addEventListener("change", load);
+
+document.getElementById("export-csv").addEventListener("click", async () => {
+  const lang = document.getElementById("lang").value.trim() || "zh";
+  const btn = document.getElementById("export-csv");
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Exporting…";
+  try {
+    const res = await fetch(
+      `/api/export.csv?lang=${encodeURIComponent(lang)}&status=KNOWN,LEARNING`,
+    );
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const cd = res.headers.get("Content-Disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/);
+    a.download = match?.[1] || `migaku-vocab-${lang}.csv`;
+    a.href = url;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`CSV export failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+});
+
+document.getElementById("export-pdf").addEventListener("click", async () => {
+  closeWordMenu();
+  const overviewActive = document.getElementById("tab-overview").classList.contains("active");
+  if (!overviewActive) {
+    switchTab("overview");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  window.print();
+});
 
 document.addEventListener("click", (ev) => {
   if (!activeWordMenu) return;

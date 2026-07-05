@@ -1,4 +1,4 @@
-"""Local HTTP server for the progress dashboard prototype.
+"""Local HTTP server for the progress dashboard.
 
 Serves a static HTML UI and a small JSON API backed by state.db.
 """
@@ -9,12 +9,14 @@ import logging
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from datetime import date
 from urllib.parse import parse_qs, urlparse
 
 from . import config
+from .export import build_csv_bytes, filter_rows
 from .migaku import auth
 from .migaku.word_actions import apply_word_action
-from .progress_stats import build_progress_payload
+from .progress_stats import build_live_stats_payload, build_progress_payload
 from .hsk.compare import build_hsk_gaps_from_cache, build_hsk_report_from_cache
 from .state import StateCache
 
@@ -97,12 +99,42 @@ def _post_word_action_json(body: bytes) -> tuple[int, bytes]:
                 lang=lang,
                 action=action,
             )
+            standard = (req.get("gaps_standard") or "hsk30").strip()
+            mode = (req.get("gaps_mode") or "exclusive").strip()
+            payload["live"] = build_live_stats_payload(cache, lang)
+            payload["gaps"] = build_hsk_gaps_from_cache(
+                cache, lang, standard=standard, mode=mode,
+            )
     except ValueError as exc:
         return 400, json.dumps({"error": str(exc)}).encode("utf-8")
     except RuntimeError as exc:
         return 502, json.dumps({"error": str(exc)}).encode("utf-8")
 
     return 200, json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+def _load_vocab_csv(lang: str, status_param: str) -> tuple[int, bytes, str]:
+    if not config.STATE_DB_PATH.exists():
+        return 400, b"state.db not found - run sync first", "text/plain; charset=utf-8"
+
+    statuses = [s.strip().upper() for s in status_param.split(",") if s.strip()]
+    if not statuses:
+        statuses = ["KNOWN", "LEARNING"]
+
+    with StateCache(config.STATE_DB_PATH) as cache:
+        rows = filter_rows(
+            list(cache.load_all().values()),
+            lang or None,
+            statuses,
+            include_archived=False,
+        )
+
+    if not rows:
+        return 404, b"No rows match export filter", "text/plain; charset=utf-8"
+
+    status_slug = "-".join(s.lower() for s in statuses)
+    filename = f"migaku-vocab-{lang}-{status_slug}-{date.today().isoformat()}.csv"
+    return 200, build_csv_bytes(rows), filename
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -131,6 +163,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             mode = qs.get("mode", ["exclusive"])[0]
             data = _load_hsk_gaps_json(lang, standard, mode)
             self._send(200, data, "application/json; charset=utf-8")
+            return
+
+        if path == "/api/export.csv":
+            qs = parse_qs(parsed.query)
+            lang = qs.get("lang", [config.DEFAULT_LANG])[0]
+            status = qs.get("status", ["KNOWN,LEARNING"])[0]
+            code, data, filename = _load_vocab_csv(lang, status)
+            if code != 200:
+                self._send(code, data, "text/plain; charset=utf-8")
+                return
+            self._send_download(
+                200,
+                data,
+                "text/csv; charset=utf-8",
+                filename,
+            )
             return
 
         if path in ("/", "/index.html"):
@@ -173,6 +221,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_download(
+        self,
+        code: int,
+        body: bytes,
+        content_type: str,
+        filename: str,
+    ) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)

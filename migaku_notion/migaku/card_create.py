@@ -287,6 +287,7 @@ def enqueue_card_creation(
         "word": word,
         "lang": ctx.lang,
         "status": status_up,
+        "secondary": secondary or "0",
         "card_id": card_id,
         "migaku": result,
         **summary,
