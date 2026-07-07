@@ -447,11 +447,28 @@ document.getElementById("gaps-mode").addEventListener("change", () => {
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("lang").addEventListener("change", load);
 
+async function readJsonResponse(res) {
+  const text = await res.text();
+  if (!text) {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (res.status === 404) {
+      throw new Error(
+        "Dashboard API not found — stop and restart: python -m migaku_notion progress --serve",
+      );
+    }
+    throw new Error(text.slice(0, 200) || `HTTP ${res.status}`);
+  }
+}
+
 async function pollSyncUntilDone() {
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const res = await fetch("/api/sync/status");
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     const sync = data.sync || {};
     if (!sync.running) {
       return sync;
@@ -473,7 +490,7 @@ async function startDashboardSync({ notion = false, button }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lang, notion }),
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res);
     if (res.status === 409) {
       await pollSyncUntilDone();
       await load();

@@ -303,7 +303,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not path.is_file():
             self._send(404, b"Not found", "text/plain")
             return
-        self._send(200, path.read_bytes(), content_type)
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send(self, code: int, body: bytes, content_type: str) -> None:
         self.send_response(code)
