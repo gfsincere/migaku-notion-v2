@@ -100,6 +100,7 @@ def _post_word_action_json(body: bytes) -> tuple[int, bytes]:
                 dict_form=word,
                 lang=lang,
                 action=action,
+                optimistic=True,
             )
             standard = (req.get("gaps_standard") or "hsk30").strip()
             mode = (req.get("gaps_mode") or "exclusive").strip()
@@ -111,9 +112,9 @@ def _post_word_action_json(body: bytes) -> tuple[int, bytes]:
         return 400, json.dumps({"error": str(exc)}).encode("utf-8")
     except RuntimeError as exc:
         return 502, json.dumps({"error": str(exc)}).encode("utf-8")
-    except requests.RequestException as exc:
+    except requests.RequestException:
         return 504, json.dumps({
-            "error": f"Migaku request timed out or failed — try again in a moment ({exc})",
+            "error": "Migaku is not responding — try again in a moment.",
         }).encode("utf-8")
 
     return 200, json.dumps(payload, ensure_ascii=False).encode("utf-8")

@@ -75,8 +75,8 @@ from . import auth, const  # noqa: F401
 
 log = logging.getLogger("migaku-notion")
 
-_PUSH_ENQUEUE_TIMEOUT = 120
-_PUSH_ENQUEUE_RETRIES = 3
+_PUSH_ENQUEUE_TIMEOUT = (15, 45)  # (connect, read) seconds
+_PUSH_ENQUEUE_RETRIES = 5
 
 
 def _encode_lzo(payload: bytes) -> bytes:
@@ -123,6 +123,9 @@ def push_enqueue(
     device_id: str,
     device_version: int,
     payload: dict[str, Any],
+    *,
+    retries: int | None = None,
+    timeout: float | tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Send a single /push/enqueue and return the parsed response dict.
 
@@ -154,10 +157,12 @@ def push_enqueue(
     params = {"deviceId": device_id, "deviceVersion": int(device_version)}
     body_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     body_lzo = _encode_lzo(body_json)
+    max_attempts = retries if retries is not None else _PUSH_ENQUEUE_RETRIES
+    req_timeout = timeout if timeout is not None else _PUSH_ENQUEUE_TIMEOUT
 
     def _post(version: int) -> requests.Response:
         last_exc: BaseException | None = None
-        for attempt in range(_PUSH_ENQUEUE_RETRIES):
+        for attempt in range(max_attempts):
             try:
                 return requests.post(
                     const.PUSH_ENQUEUE_URL,
@@ -169,25 +174,25 @@ def push_enqueue(
                         # Required by Migaku's current core-server write path.
                         "x-content-encoding": "lzo",
                     },
-                    timeout=_PUSH_ENQUEUE_TIMEOUT,
+                    timeout=req_timeout,
                 )
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
                 last_exc = exc
-                if attempt + 1 >= _PUSH_ENQUEUE_RETRIES:
+                if attempt + 1 >= max_attempts:
                     break
                 wait = min(2 ** attempt, 10)
                 log.warning(
                     "Migaku /push/enqueue network error (attempt %d/%d); "
                     "retrying in %ds: %s",
                     attempt + 1,
-                    _PUSH_ENQUEUE_RETRIES,
+                    max_attempts,
                     wait,
                     exc,
                 )
                 time.sleep(wait)
         assert last_exc is not None
         raise RuntimeError(
-            f"Migaku /push/enqueue timed out after {_PUSH_ENQUEUE_RETRIES} attempts "
+            f"Migaku /push/enqueue timed out after {max_attempts} attempts "
             f"({type(last_exc).__name__})"
         ) from last_exc
 
@@ -223,6 +228,8 @@ def set_word_status(
     part_of_speech: str,
     language: str,
     status: str,        # "KNOWN" | "LEARNING" | "UNKNOWN" | "IGNORED" | "TRACKED"
+    retries: int | None = None,
+    timeout: float | tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Convenience: change a single word's status.
 
@@ -271,7 +278,10 @@ def set_word_status(
         "del": 0,
         "hasCard": False,
     }]
-    return push_enqueue(token, device_id, device_version, body)
+    return push_enqueue(
+        token, device_id, device_version, body,
+        retries=retries, timeout=timeout,
+    )
 
 
 def push_words(

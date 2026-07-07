@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,6 +21,28 @@ VALID_STATUSES = frozenset({"KNOWN", "LEARNING", "UNKNOWN", "IGNORED", "TRACKED"
 
 # Serialize dashboard pushes — concurrent clicks reuse a stale deviceVersion.
 _push_lock = threading.RLock()
+
+# Dashboard: fail fast to the UI, keep retrying in the background.
+_DASHBOARD_PUSH_RETRIES = 1
+_DASHBOARD_PUSH_TIMEOUT = (10, 25)
+_BACKGROUND_PUSH_RETRIES = 5
+_BACKGROUND_PUSH_TIMEOUT = (15, 60)
+
+
+@dataclass
+class _StatusPushJob:
+    word: str
+    lang: str
+    status: str
+    secondary: str
+    pos: str
+    attempt: int = 0
+
+
+_job_queue: queue.Queue[_StatusPushJob | None] = queue.Queue()
+_worker_lock = threading.Lock()
+_worker_started = False
+
 
 def find_cached_word_rows(
     cache: StateCache,
@@ -119,7 +144,6 @@ def _upsert_cache_status(
 
 
 def bump_server_version_after_push(
-    session: auth.AuthSession,
     cache: StateCache,
     push_result: dict[str, Any] | None,
 ) -> None:
@@ -135,6 +159,107 @@ def bump_server_version_after_push(
     cache.set_server_version(candidate)
     log.info("server_version: %d -> %d (after push)", current, candidate)
 
+
+def _ensure_push_worker() -> None:
+    global _worker_started
+    with _worker_lock:
+        if _worker_started:
+            return
+        _worker_started = True
+        threading.Thread(
+            target=_status_push_worker,
+            daemon=True,
+            name="migaku-push-retry",
+        ).start()
+
+
+def _enqueue_status_push(job: _StatusPushJob) -> None:
+    _job_queue.put(job)
+    _ensure_push_worker()
+    log.info(
+        "Queued background Migaku push for %s (%s), attempt %d",
+        job.word, job.status, job.attempt,
+    )
+
+
+def _run_status_push(
+    session: auth.AuthSession,
+    cache: StateCache,
+    *,
+    word: str,
+    lang: str,
+    status: str,
+    secondary: str,
+    pos: str,
+    retries: int | None,
+    timeout: float | tuple[float, float] | None,
+) -> dict[str, Any]:
+    device_id = config.get_or_create_device_id()
+    with _push_lock:
+        device_version = max(cache.get_server_version(), 1)
+        log.info(
+            "Pushing status %s for %s (lang=%s, secondary=%s, deviceVersion=%d)",
+            status, word, lang, secondary, device_version,
+        )
+        result = push.set_word_status(
+            session.token,
+            device_id,
+            device_version,
+            word_text=word,
+            secondary=secondary,
+            part_of_speech=pos,
+            language=lang,
+            status=status,
+            retries=retries,
+            timeout=timeout,
+        )
+        bump_server_version_after_push(cache, result)
+    return result
+
+
+def _status_push_worker() -> None:
+    while True:
+        job = _job_queue.get()
+        try:
+            if job is None:
+                return
+            if job.attempt > 0:
+                time.sleep(min(30, 5 * (2 ** min(job.attempt - 1, 4))))
+            session = auth.auth_session_from_env(
+                refresh_token=config.migaku_refresh_token(),
+                email=config.migaku_email(),
+                password=config.migaku_password(),
+            )
+            with StateCache(config.STATE_DB_PATH) as cache:
+                _run_status_push(
+                    session,
+                    cache,
+                    word=job.word,
+                    lang=job.lang,
+                    status=job.status,
+                    secondary=job.secondary,
+                    pos=job.pos,
+                    retries=_BACKGROUND_PUSH_RETRIES,
+                    timeout=_BACKGROUND_PUSH_TIMEOUT,
+                )
+            log.info("Background Migaku push succeeded for %s (%s)", job.word, job.status)
+        except Exception as exc:  # noqa: BLE001
+            if job is not None and job.attempt < 12:
+                job.attempt += 1
+                log.warning(
+                    "Background Migaku push failed for %s (%s), attempt %d: %s",
+                    job.word, job.status, job.attempt, exc,
+                )
+                _job_queue.put(job)
+            elif job is not None:
+                log.error(
+                    "Giving up background Migaku push for %s (%s) after %d attempts",
+                    job.word, job.status, job.attempt,
+                )
+        finally:
+            _job_queue.task_done()
+
+
 def push_word_status(
     session: auth.AuthSession,
     cache: StateCache,
@@ -142,6 +267,7 @@ def push_word_status(
     dict_form: str,
     lang: str,
     status: str,
+    optimistic: bool = False,
 ) -> dict[str, Any]:
     """Set a word's Migaku status and update local cache on success."""
     status_up = status.strip().upper()
@@ -152,32 +278,71 @@ def push_word_status(
     if not word:
         raise ValueError("word is required")
 
-    device_id = config.get_or_create_device_id()
     rows = find_cached_word_rows(cache, lang, word)
     secondary, pos = _pick_push_fields(rows, lang)
 
-    with _push_lock:
-        device_version = max(cache.get_server_version(), 1)
-        log.info(
-            "Pushing status %s for %s (lang=%s, secondary=%s, deviceVersion=%d)",
-            status_up, word, lang, secondary, device_version,
-        )
-        result = push.set_word_status(
-            session.token,
-            device_id,
-            device_version,
-            word_text=word,
-            secondary=secondary,
-            part_of_speech=pos,
-            language=lang,
-            status=status_up,
-        )
-
+    if optimistic:
         cached_rows_updated = _upsert_cache_status(
             cache, lang, word, status_up, secondary=secondary,
         )
+        try:
+            result = _run_status_push(
+                session,
+                cache,
+                word=word,
+                lang=lang,
+                status=status_up,
+                secondary=secondary,
+                pos=pos,
+                retries=_DASHBOARD_PUSH_RETRIES,
+                timeout=_DASHBOARD_PUSH_TIMEOUT,
+            )
+        except RuntimeError as exc:
+            _enqueue_status_push(_StatusPushJob(
+                word=word,
+                lang=lang,
+                status=status_up,
+                secondary=secondary,
+                pos=pos,
+            ))
+            return {
+                "ok": True,
+                "word": word,
+                "lang": lang,
+                "status": status_up,
+                "secondary": secondary,
+                "cached_rows_updated": cached_rows_updated,
+                "migaku_pending": True,
+                "warning": (
+                    "Saved locally. Migaku is slow right now — "
+                    "the push will retry in the background."
+                ),
+                "migaku_error": str(exc),
+            }
+        return {
+            "ok": True,
+            "word": word,
+            "lang": lang,
+            "status": status_up,
+            "secondary": secondary,
+            "cached_rows_updated": cached_rows_updated,
+            "migaku": result,
+        }
 
-        bump_server_version_after_push(session, cache, result)
+    result = _run_status_push(
+        session,
+        cache,
+        word=word,
+        lang=lang,
+        status=status_up,
+        secondary=secondary,
+        pos=pos,
+        retries=None,
+        timeout=None,
+    )
+    cached_rows_updated = _upsert_cache_status(
+        cache, lang, word, status_up, secondary=secondary,
+    )
     return {
         "ok": True,
         "word": word,
@@ -196,6 +361,7 @@ def apply_word_action(
     dict_form: str,
     lang: str,
     action: str,
+    optimistic: bool = False,
 ) -> dict[str, Any]:
     """Dashboard / CLI: mark status or enqueue a dictionary-enriched card."""
     action_up = action.strip().upper()
@@ -210,7 +376,12 @@ def apply_word_action(
             ctx = load_card_create_context(session, cache, lang)
             if action_up == "LEARNING" and word in ctx.words_with_cards:
                 return push_word_status(
-                    session, cache, dict_form=word, lang=lang, status="LEARNING",
+                    session,
+                    cache,
+                    dict_form=word,
+                    lang=lang,
+                    status="LEARNING",
+                    optimistic=optimistic,
                 )
             known_status = "UNKNOWN" if action_up == "CREATE_CARD" else "LEARNING"
             result = enqueue_card_creation(
@@ -232,12 +403,14 @@ def apply_word_action(
                     pinyin_numeric=result.get("pinyin_numeric"),
                     part_of_speech=result.get("part_of_speech"),
                 )
-            bump_server_version_after_push(session, cache, result.get("migaku"))
+            bump_server_version_after_push(cache, result.get("migaku"))
         return result
+
     return push_word_status(
         session,
         cache,
         dict_form=word,
         lang=lang,
         status=action_up,
+        optimistic=optimistic,
     )

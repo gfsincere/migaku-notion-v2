@@ -280,6 +280,10 @@ async function markWordStatus(word, action, chipEl, listKind) {
       await loadGaps(lang);
     }
     closeWordMenu();
+    chipEl.classList.remove("pending");
+    if (data.migaku_pending && data.warning) {
+      console.warn(data.warning);
+    }
     if (action === "CREATE_CARD" || action === "LEARNING") {
       const py = data.pinyin_marks || data.pinyin_numeric || "";
       const label = action === "LEARNING" ? "Added as LEARNING" : "Card created in Migaku";
