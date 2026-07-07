@@ -62,7 +62,13 @@ h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; }
 }
 
 #sync-migaku {
-  grid-column: 1 / -1;
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+}
+
+#sync-all {
+  grid-column: 2;
   grid-row: 2;
   width: 100%;
 }

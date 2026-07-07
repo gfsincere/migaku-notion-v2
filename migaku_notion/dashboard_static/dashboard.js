@@ -459,17 +459,19 @@ async function pollSyncUntilDone() {
   }
 }
 
-document.getElementById("sync-migaku").addEventListener("click", async () => {
+async function startDashboardSync({ notion = false, button }) {
   const lang = document.getElementById("lang").value.trim() || "zh";
-  const btn = document.getElementById("sync-migaku");
-  const prev = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = "Syncing…";
+  const syncMigakuBtn = document.getElementById("sync-migaku");
+  const syncAllBtn = document.getElementById("sync-all");
+  const prev = button.textContent;
+  syncMigakuBtn.disabled = true;
+  syncAllBtn.disabled = true;
+  button.textContent = "Syncing…";
   try {
     const res = await fetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lang }),
+      body: JSON.stringify({ lang, notion }),
     });
     const data = await res.json();
     if (res.status === 409) {
@@ -488,9 +490,18 @@ document.getElementById("sync-migaku").addEventListener("click", async () => {
   } catch (err) {
     alert(`Sync failed: ${err.message}`);
   } finally {
-    btn.disabled = false;
-    btn.textContent = prev;
+    syncMigakuBtn.disabled = false;
+    syncAllBtn.disabled = false;
+    button.textContent = prev;
   }
+}
+
+document.getElementById("sync-migaku").addEventListener("click", (ev) => {
+  startDashboardSync({ notion: false, button: ev.currentTarget });
+});
+
+document.getElementById("sync-all").addEventListener("click", (ev) => {
+  startDashboardSync({ notion: true, button: ev.currentTarget });
 });
 
 document.getElementById("export-csv").addEventListener("click", async () => {

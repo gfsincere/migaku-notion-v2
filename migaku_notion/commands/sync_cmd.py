@@ -135,6 +135,32 @@ def _local_page_id(migaku_key: str) -> str:
     return f"local:{migaku_key}"
 
 
+def _is_local_page_id(page_id: str) -> bool:
+    return page_id.startswith("local:")
+
+
+def _sync_notion_page(
+    notion: NotionClient,
+    word: Word,
+    *,
+    page_id: str,
+    include_meaning: bool,
+    now_iso: str,
+    archived: bool = False,
+) -> str:
+    """Update an existing Notion page, or create one for local-only cache rows."""
+    props = build_properties(word, include_meaning=include_meaning, now_iso=now_iso)
+    if _is_local_page_id(page_id):
+        page = notion.create_page(props)
+        new_id = page.get("id")
+        if not new_id:
+            raise RuntimeError(f"Notion create returned no page id for {word.key}")
+        log.info("Created Notion page for local-only row %s", word.key)
+        return new_id
+    notion.update_page(page_id, props, archived=archived)
+    return page_id
+
+
 # ---------------------------------------------------------------------------
 # run()
 # ---------------------------------------------------------------------------
@@ -358,14 +384,18 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
             if args.dry_run:
                 updated += 1
             else:
+                page_id = cached.page_id
                 if notion is not None:
-                    notion.update_page(
-                        cached.page_id,
-                        build_properties(word, include_meaning=include_meaning, now_iso=now_iso),
+                    page_id = _sync_notion_page(
+                        notion,
+                        word,
+                        page_id=cached.page_id,
+                        include_meaning=include_meaning,
+                        now_iso=now_iso,
                         archived=False,
                     )
                 row = _cache_row_from_word(
-                    word, page_id=cached.page_id, last_synced=now_iso,
+                    word, page_id=page_id, last_synced=now_iso,
                     archived=False,
                     notion_meaning_was_blank=cached.notion_meaning_was_blank and not include_meaning,
                 )
@@ -377,13 +407,17 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
             if args.dry_run:
                 updated += 1
             else:
+                page_id = cached.page_id
                 if notion is not None:
-                    notion.update_page(
-                        cached.page_id,
-                        build_properties(word, include_meaning=include_meaning, now_iso=now_iso),
+                    page_id = _sync_notion_page(
+                        notion,
+                        word,
+                        page_id=cached.page_id,
+                        include_meaning=include_meaning,
+                        now_iso=now_iso,
                     )
                 row = _cache_row_from_word(
-                    word, page_id=cached.page_id, last_synced=now_iso,
+                    word, page_id=page_id, last_synced=now_iso,
                     notion_meaning_was_blank=cached.notion_meaning_was_blank and not include_meaning,
                 )
                 cache.upsert(row)   # type: ignore[union-attr]
@@ -442,7 +476,7 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
             if args.dry_run:
                 archived_count += 1
                 continue
-            if notion is not None and not r.page_id.startswith("local:"):
+            if notion is not None and not _is_local_page_id(r.page_id):
                 notion.archive_page(r.page_id)
             cache.mark_archived(r.migaku_key, archived=True, last_synced=now_iso)   # type: ignore[union-attr]
             archived_count += 1
@@ -474,8 +508,8 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
     return 0
 
 
-def run_full_refresh(lang: str | None = None) -> int:
-    """Full Migaku pull + cache (+ optional Notion). Used by the dashboard."""
+def run_full_refresh(lang: str | None = None, *, no_notion: bool = False) -> int:
+    """Full Migaku pull + cache. Used by the dashboard sync buttons."""
     args = argparse.Namespace(
         lang=lang or config.DEFAULT_LANG,
         status=config.DEFAULT_STATUS,
@@ -483,6 +517,6 @@ def run_full_refresh(lang: str | None = None) -> int:
         archive_stale=False,
         full_refresh=True,
         no_dict_meanings=False,
-        no_notion=False,
+        no_notion=no_notion,
     )
     return run(args)

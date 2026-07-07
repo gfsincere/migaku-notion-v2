@@ -33,6 +33,7 @@ _sync_lock = threading.Lock()
 _sync_state: dict[str, object] = {
     "running": False,
     "lang": None,
+    "notion": False,
     "started_at": None,
     "finished_at": None,
     "exit_code": None,
@@ -45,7 +46,7 @@ def _sync_status_payload() -> dict[str, object]:
         return dict(_sync_state)
 
 
-def _start_background_sync(lang: str) -> tuple[int, dict[str, object]]:
+def _start_background_sync(lang: str, *, notion: bool = False) -> tuple[int, dict[str, object]]:
     lang = lang.strip() or config.DEFAULT_LANG
     with _sync_lock:
         if _sync_state["running"]:
@@ -56,6 +57,7 @@ def _start_background_sync(lang: str) -> tuple[int, dict[str, object]]:
         _sync_state.update({
             "running": True,
             "lang": lang,
+            "notion": notion,
             "started_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
             "finished_at": None,
             "exit_code": None,
@@ -64,7 +66,7 @@ def _start_background_sync(lang: str) -> tuple[int, dict[str, object]]:
 
     def _worker() -> None:
         try:
-            code = run_full_refresh(lang)
+            code = run_full_refresh(lang, no_notion=not notion)
             with _sync_lock:
                 _sync_state["exit_code"] = code
                 if code != 0:
@@ -286,7 +288,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except (UnicodeDecodeError, json.JSONDecodeError):
                 req = {}
             lang = (req.get("lang") or config.DEFAULT_LANG).strip()
-            code, payload = _start_background_sync(lang)
+            notion = bool(req.get("notion"))
+            code, payload = _start_background_sync(lang, notion=notion)
             self._send(
                 code,
                 json.dumps(payload).encode("utf-8"),
