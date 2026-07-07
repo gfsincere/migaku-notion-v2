@@ -447,6 +447,52 @@ document.getElementById("gaps-mode").addEventListener("change", () => {
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("lang").addEventListener("change", load);
 
+async function pollSyncUntilDone() {
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const res = await fetch("/api/sync/status");
+    const data = await res.json();
+    const sync = data.sync || {};
+    if (!sync.running) {
+      return sync;
+    }
+  }
+}
+
+document.getElementById("sync-migaku").addEventListener("click", async () => {
+  const lang = document.getElementById("lang").value.trim() || "zh";
+  const btn = document.getElementById("sync-migaku");
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Syncing…";
+  try {
+    const res = await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lang }),
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+      await pollSyncUntilDone();
+      await load();
+      return;
+    }
+    if (!res.ok || data.error) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const finished = await pollSyncUntilDone();
+    await load();
+    if (finished.error) {
+      alert(`Sync failed: ${finished.error}`);
+    }
+  } catch (err) {
+    alert(`Sync failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+});
+
 document.getElementById("export-csv").addEventListener("click", async () => {
   const lang = document.getElementById("lang").value.trim() || "zh";
   const btn = document.getElementById("export-csv");

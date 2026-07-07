@@ -6,15 +6,17 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import webbrowser
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from datetime import date
 from urllib.parse import parse_qs, urlparse
 
 import requests
 
 from . import config
+from .commands.sync_cmd import run_full_refresh
 from .export import build_csv_bytes, filter_rows
 from .migaku import auth
 from .migaku.word_actions import apply_word_action
@@ -26,6 +28,61 @@ from .state import StateCache
 log = logging.getLogger("migaku-notion")
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
+
+_sync_lock = threading.Lock()
+_sync_state: dict[str, object] = {
+    "running": False,
+    "lang": None,
+    "started_at": None,
+    "finished_at": None,
+    "exit_code": None,
+    "error": None,
+}
+
+
+def _sync_status_payload() -> dict[str, object]:
+    with _sync_lock:
+        return dict(_sync_state)
+
+
+def _start_background_sync(lang: str) -> tuple[int, dict[str, object]]:
+    lang = lang.strip() or config.DEFAULT_LANG
+    with _sync_lock:
+        if _sync_state["running"]:
+            return 409, {
+                "error": "Sync already running",
+                "sync": dict(_sync_state),
+            }
+        _sync_state.update({
+            "running": True,
+            "lang": lang,
+            "started_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "finished_at": None,
+            "exit_code": None,
+            "error": None,
+        })
+
+    def _worker() -> None:
+        try:
+            code = run_full_refresh(lang)
+            with _sync_lock:
+                _sync_state["exit_code"] = code
+                if code != 0:
+                    _sync_state["error"] = f"sync exited with code {code}"
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Dashboard sync failed")
+            with _sync_lock:
+                _sync_state["exit_code"] = 1
+                _sync_state["error"] = str(exc)
+        finally:
+            with _sync_lock:
+                _sync_state["running"] = False
+                _sync_state["finished_at"] = (
+                    datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                )
+
+    threading.Thread(target=_worker, daemon=True, name="dashboard-sync").start()
+    return 202, {"ok": True, "started": True, "sync": _sync_status_payload()}
 
 
 def _load_progress_json(lang: str) -> bytes:
@@ -188,6 +245,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/sync/status":
+            payload = {"sync": _sync_status_payload()}
+            self._send(200, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")
+            return
+
         if path in ("/", "/index.html"):
             self._serve_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
@@ -214,6 +276,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(length) if length else b"{}"
             code, data = _post_word_action_json(body)
             self._send(code, data, "application/json; charset=utf-8")
+            return
+
+        if path == "/api/sync":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                req = json.loads(body.decode("utf-8") or "{}")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                req = {}
+            lang = (req.get("lang") or config.DEFAULT_LANG).strip()
+            code, payload = _start_background_sync(lang)
+            self._send(
+                code,
+                json.dumps(payload).encode("utf-8"),
+                "application/json; charset=utf-8",
+            )
             return
 
         self._send(404, b"Not found", "text/plain")

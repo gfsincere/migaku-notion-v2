@@ -472,3 +472,17 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901  (linear orchestration)
         created, updated, unchanged, archived_count, args.dry_run,
     )
     return 0
+
+
+def run_full_refresh(lang: str | None = None) -> int:
+    """Full Migaku pull + cache (+ optional Notion). Used by the dashboard."""
+    args = argparse.Namespace(
+        lang=lang or config.DEFAULT_LANG,
+        status=config.DEFAULT_STATUS,
+        dry_run=False,
+        archive_stale=False,
+        full_refresh=True,
+        no_dict_meanings=False,
+        no_notion=False,
+    )
+    return run(args)
