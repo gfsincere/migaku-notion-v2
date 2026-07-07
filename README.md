@@ -113,6 +113,10 @@ Or point at a Notion page / database of candidate words. Dry-run by default; add
 
 Same properties as the original migaku-notion tool, plus **Frequency** and **Example**. `setup` creates the database or adds missing columns.
 
+After sync, your **Migaku Vocab** database is a sortable table with review stats, fail rates, and stable Migaku keys — ready for filters, views, and quiz workflows:
+
+![Notion output — Migaku Vocab database with word stats and sync metadata](docs/notion-vocab-database.png)
+
 | Property | Notes |
 |----------|--------|
 | Word | Title — the hanzi / word |
