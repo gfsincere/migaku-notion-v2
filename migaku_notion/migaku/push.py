@@ -64,6 +64,7 @@ exact field set Migaku expects when bumping `knownStatus` for a word.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import Any, Iterable
@@ -71,6 +72,11 @@ from typing import Any, Iterable
 import requests
 
 from . import auth, const  # noqa: F401
+
+log = logging.getLogger("migaku-notion")
+
+_PUSH_ENQUEUE_TIMEOUT = 120
+_PUSH_ENQUEUE_RETRIES = 3
 
 
 def _encode_lzo(payload: bytes) -> bytes:
@@ -150,18 +156,40 @@ def push_enqueue(
     body_lzo = _encode_lzo(body_json)
 
     def _post(version: int) -> requests.Response:
-        return requests.post(
-            const.PUSH_ENQUEUE_URL,
-            params={"deviceId": device_id, "deviceVersion": int(version)},
-            data=body_lzo,
-            headers={
-                "Authorization": f"Bearer {token.id_token}",
-                "Content-Type": "application/octet-stream",
-                # Required by Migaku's current core-server write path.
-                "x-content-encoding": "lzo",
-            },
-            timeout=60,
-        )
+        last_exc: BaseException | None = None
+        for attempt in range(_PUSH_ENQUEUE_RETRIES):
+            try:
+                return requests.post(
+                    const.PUSH_ENQUEUE_URL,
+                    params={"deviceId": device_id, "deviceVersion": int(version)},
+                    data=body_lzo,
+                    headers={
+                        "Authorization": f"Bearer {token.id_token}",
+                        "Content-Type": "application/octet-stream",
+                        # Required by Migaku's current core-server write path.
+                        "x-content-encoding": "lzo",
+                    },
+                    timeout=_PUSH_ENQUEUE_TIMEOUT,
+                )
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_exc = exc
+                if attempt + 1 >= _PUSH_ENQUEUE_RETRIES:
+                    break
+                wait = min(2 ** attempt, 10)
+                log.warning(
+                    "Migaku /push/enqueue network error (attempt %d/%d); "
+                    "retrying in %ds: %s",
+                    attempt + 1,
+                    _PUSH_ENQUEUE_RETRIES,
+                    wait,
+                    exc,
+                )
+                time.sleep(wait)
+        assert last_exc is not None
+        raise RuntimeError(
+            f"Migaku /push/enqueue timed out after {_PUSH_ENQUEUE_RETRIES} attempts "
+            f"({type(last_exc).__name__})"
+        ) from last_exc
 
     resp = _post(int(device_version))
     if resp.ok:

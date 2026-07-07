@@ -154,8 +154,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_progress.add_argument("--host", default="127.0.0.1",
                             help="Bind address for --serve (default: 127.0.0.1).")
-    p_progress.add_argument("--port", type=int, default=8765,
-                            help="Port for --serve (default: 8765).")
+    p_progress.add_argument("--port", type=int, default=59009,
+                            help="Port for --serve (default: 59009).")
     p_progress.add_argument(
         "--no-open",
         action="store_true",

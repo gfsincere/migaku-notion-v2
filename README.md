@@ -50,7 +50,7 @@ Use `--dry-run` to preview. Use `--no-notion` if you only want the local cache.
 python -m migaku_notion progress --serve
 ```
 
-Open http://127.0.0.1:8765. The **Progress Scorecard** tab shows totals, growth charts, and HSK 2.0 / 3.0 coverage bars. The **Missing words** tab lists syllabus gaps by level: just click a word to mark KNOWN, add as LEARNING (creates a dict card), or create a card only. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
+Open http://127.0.0.1:59009. The **Progress Scorecard** tab shows totals, growth charts, and HSK 2.0 / 3.0 coverage bars. The **Missing words** tab lists syllabus gaps by level: just click a word to mark KNOWN, add as LEARNING (creates a dict card), or create a card only. **Export word list** and **Export dashboard report** (PDF via print) are in the header.
 
 ![Progress Scorecard — known words, Hanzi totals, HSK coverage](docs/dashboard-scorecard.png)
 

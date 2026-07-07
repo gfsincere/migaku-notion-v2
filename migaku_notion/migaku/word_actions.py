@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,13 +10,14 @@ from .. import config
 from ..models import CachedRow
 from ..state import StateCache
 from . import auth, push
-from . import pull as pull_mod
 
 
 log = logging.getLogger("migaku-notion")
 
 VALID_STATUSES = frozenset({"KNOWN", "LEARNING", "UNKNOWN", "IGNORED", "TRACKED"})
 
+# Serialize dashboard pushes — concurrent clicks reuse a stale deviceVersion.
+_push_lock = threading.RLock()
 
 def find_cached_word_rows(
     cache: StateCache,
@@ -128,22 +130,10 @@ def bump_server_version_after_push(
         received = push_result.get("receivedAt")
         if isinstance(received, int) and received > candidate:
             candidate = received
-    device_id = config.get_or_create_device_id()
-    try:
-        payload = pull_mod.pull_sync(
-            session,
-            device_id,
-            server_version=candidate,
-            paginate=False,
-            fallback_full_on_500=False,
-        )
-        candidate = max(candidate, pull_mod.next_server_version(payload, previous=candidate))
-    except RuntimeError as exc:
-        log.warning("Could not probe server version after push (%s); using receivedAt only.", exc)
-    if candidate > current:
-        cache.set_server_version(candidate)
-        log.info("server_version: %d -> %d (after push)", current, candidate)
-
+    if candidate <= current:
+        return
+    cache.set_server_version(candidate)
+    log.info("server_version: %d -> %d (after push)", current, candidate)
 
 def push_word_status(
     session: auth.AuthSession,
@@ -163,31 +153,31 @@ def push_word_status(
         raise ValueError("word is required")
 
     device_id = config.get_or_create_device_id()
-    device_version = max(cache.get_server_version(), 1)
     rows = find_cached_word_rows(cache, lang, word)
     secondary, pos = _pick_push_fields(rows, lang)
 
-    log.info(
-        "Pushing status %s for %s (lang=%s, secondary=%s, deviceVersion=%d)",
-        status_up, word, lang, secondary, device_version,
-    )
-    result = push.set_word_status(
-        session.token,
-        device_id,
-        device_version,
-        word_text=word,
-        secondary=secondary,
-        part_of_speech=pos,
-        language=lang,
-        status=status_up,
-    )
+    with _push_lock:
+        device_version = max(cache.get_server_version(), 1)
+        log.info(
+            "Pushing status %s for %s (lang=%s, secondary=%s, deviceVersion=%d)",
+            status_up, word, lang, secondary, device_version,
+        )
+        result = push.set_word_status(
+            session.token,
+            device_id,
+            device_version,
+            word_text=word,
+            secondary=secondary,
+            part_of_speech=pos,
+            language=lang,
+            status=status_up,
+        )
 
-    cached_rows_updated = _upsert_cache_status(
-        cache, lang, word, status_up, secondary=secondary,
-    )
+        cached_rows_updated = _upsert_cache_status(
+            cache, lang, word, status_up, secondary=secondary,
+        )
 
-    bump_server_version_after_push(session, cache, result)
-
+        bump_server_version_after_push(session, cache, result)
     return {
         "ok": True,
         "word": word,
@@ -216,34 +206,34 @@ def apply_word_action(
     if action_up in ("CREATE_CARD", "LEARNING"):
         from .card_create import enqueue_card_creation, load_card_create_context
 
-        ctx = load_card_create_context(session, cache, lang)
-        if action_up == "LEARNING" and word in ctx.words_with_cards:
-            return push_word_status(
-                session, cache, dict_form=word, lang=lang, status="LEARNING",
-            )
-        known_status = "UNKNOWN" if action_up == "CREATE_CARD" else "LEARNING"
-        result = enqueue_card_creation(
-            session,
-            ctx,
-            cache,
-            dict_form=word,
-            known_status=known_status,
-        )
-        if action_up == "LEARNING":
-            _upsert_cache_status(
+        with _push_lock:
+            ctx = load_card_create_context(session, cache, lang)
+            if action_up == "LEARNING" and word in ctx.words_with_cards:
+                return push_word_status(
+                    session, cache, dict_form=word, lang=lang, status="LEARNING",
+                )
+            known_status = "UNKNOWN" if action_up == "CREATE_CARD" else "LEARNING"
+            result = enqueue_card_creation(
+                session,
+                ctx,
                 cache,
-                lang,
-                word,
-                "LEARNING",
-                secondary=result.get("secondary"),
-                meaning=result.get("meaning"),
-                pinyin_marks=result.get("pinyin_marks"),
-                pinyin_numeric=result.get("pinyin_numeric"),
-                part_of_speech=result.get("part_of_speech"),
+                dict_form=word,
+                known_status=known_status,
             )
-        bump_server_version_after_push(session, cache, result.get("migaku"))
+            if action_up == "LEARNING":
+                _upsert_cache_status(
+                    cache,
+                    lang,
+                    word,
+                    "LEARNING",
+                    secondary=result.get("secondary"),
+                    meaning=result.get("meaning"),
+                    pinyin_marks=result.get("pinyin_marks"),
+                    pinyin_numeric=result.get("pinyin_numeric"),
+                    part_of_speech=result.get("part_of_speech"),
+                )
+            bump_server_version_after_push(session, cache, result.get("migaku"))
         return result
-
     return push_word_status(
         session,
         cache,

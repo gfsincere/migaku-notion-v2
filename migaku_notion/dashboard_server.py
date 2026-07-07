@@ -12,6 +12,8 @@ from pathlib import Path
 from datetime import date
 from urllib.parse import parse_qs, urlparse
 
+import requests
+
 from . import config
 from .export import build_csv_bytes, filter_rows
 from .migaku import auth
@@ -109,6 +111,10 @@ def _post_word_action_json(body: bytes) -> tuple[int, bytes]:
         return 400, json.dumps({"error": str(exc)}).encode("utf-8")
     except RuntimeError as exc:
         return 502, json.dumps({"error": str(exc)}).encode("utf-8")
+    except requests.RequestException as exc:
+        return 504, json.dumps({
+            "error": f"Migaku request timed out or failed — try again in a moment ({exc})",
+        }).encode("utf-8")
 
     return 200, json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -247,7 +253,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def serve_dashboard(
     *,
     host: str = "127.0.0.1",
-    port: int = 8765,
+    port: int = 59009,
     lang: str = config.DEFAULT_LANG,
     open_browser: bool = True,
 ) -> int:
